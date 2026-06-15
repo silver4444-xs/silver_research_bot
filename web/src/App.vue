@@ -96,6 +96,9 @@
       <div class="card" v-if="dt==='formulas'&&pdet.formula_explanations"><div class="ch"><h3>公式解读</h3></div><div class="md" v-html="renderFormula(pdet.formula_explanations)"></div></div>
       <div class="card" v-if="dt==='visualization'&&pdet.visualization_html"><div class="ch"><h3>可视化分析</h3></div><iframe :srcdoc="pdet.visualization_html" class="vis-frame" sandbox="allow-scripts allow-same-origin" title="可视化分析"></iframe></div>
       <div class="card" v-if="dt==='audit'&&pdet.audit"><div class="ch"><h3>审计报告</h3></div><pre class="ap">{{ fmtJson(pdet.audit) }}</pre></div>
+      <div class="card" v-if="dt==='citation_graph'&&pdet.citation_graph_html"><div class="ch"><h3>引用图谱</h3></div><iframe :srcdoc="pdet.citation_graph_html" class="vis-frame" sandbox="allow-scripts"></iframe></div>
+      <div class="card" v-if="dt==='review'"><div class="ch"><h3>审稿意见</h3></div><div class="md" v-if="pdet.review_theory" v-html="renderAll(pdet.review_theory||'')"></div><div class="md" v-if="pdet.review_engineering" style="margin-top:16px" v-html="renderAll(pdet.review_engineering||'')"></div><div class="md" v-if="pdet.review_domain" style="margin-top:16px" v-html="renderAll(pdet.review_domain||'')"></div><p v-if="!pdet.review_theory&&!pdet.review_engineering&&!pdet.review_domain" class="empty">审稿意见尚未生成。</p></div>
+      <div class="card" v-if="dt==='ask'"><div class="ch"><h3>提问</h3></div><div class="row" style="gap:8px"><input v-model="askQ" placeholder="基于分析结果提问…" style="flex:1" @keydown.enter="doAsk" /><button class="btn bp bsm" @click="doAsk" :disabled="!askQ.trim()">提问</button></div><div v-if="askA" class="md" style="margin-top:12px" v-html="renderMd(askA)"></div></div>
     </div>
 
     <!-- Compare -->
@@ -138,12 +141,12 @@ const icons={
 }
 const nav=[{id:'agent',label:'Agent 对话',icon:icons.chat},{id:'papers',label:'论文研读',icon:icons.file},{id:'rag',label:'文献 RAG',icon:icons.layers}]
 const psub=[{id:'upload',label:'上传论文'},{id:'list',label:'论文列表'},{id:'compare',label:'横向对比'}]
-const dtabs=[{id:'translation',label:'全文翻译'},{id:'system_model',label:'系统模型'},{id:'problem_formulation',label:'问题表述'},{id:'optimization_algorithm',label:'优化算法'},{id:'experiment_design',label:'实验设计'},{id:'formulas',label:'公式解读'},{id:'visualization',label:'可视化'},{id:'audit',label:'审计报告'}]
+const dtabs=[{id:'translation',label:'全文翻译'},{id:'system_model',label:'系统模型'},{id:'problem_formulation',label:'问题表述'},{id:'optimization_algorithm',label:'优化算法'},{id:'experiment_design',label:'实验设计'},{id:'formulas',label:'公式解读'},{id:'visualization',label:'可视化'},{id:'citation_graph',label:'引用图谱'},{id:'review',label:'审稿意见'},{id:'audit',label:'审计报告'},{id:'ask',label:'提问'}]
 const dims=[{id:'system_model',label:'系统模型分析'},{id:'problem_formulation',label:'问题表述分析'},{id:'optimization_algorithm',label:'优化算法分析'},{id:'experiment_design',label:'实验设计分析'}]
 
 const tab=ref('papers');const ps=ref('upload');const dt=ref('translation');const upMode=ref('file')
 const upFile=ref(null);const upText=ref('');const upLang=ref('auto');const uploading=ref(false);const drag=ref(false);const upStatus=ref('');const progressMsg=ref('');const curPaperId=ref('');const pStages=ref([]);let _pollTimer=null
-const STAGES=[{id:'parse',label:'文档解析'},{id:'translate',label:'全文翻译'},{id:'analyze',label:'四维分析'},{id:'formula_explain',label:'公式解读'},{id:'visualize',label:'可视化'},{id:'audit',label:'质量审计'}]
+const STAGES=[{id:'parse',label:'文档解析'},{id:'translate',label:'全文翻译'},{id:'analyze',label:'四维分析'},{id:'formula_explain',label:'公式解读'},{id:'visualize',label:'可视化'},{id:'citation',label:'引用图谱'},{id:'review',label:'多视角审稿'},{id:'audit',label:'质量审计'}]
 const papers=ref([]);const pdet=ref(null);const cmpIds=ref([]);const cmpResult=ref(null)
 const apiOk=ref(true);const apiStatus=ref('未知');const ragPapers=ref([])
 const chatMsgs=ref([{role:'agent',content:'你好！上传 PDF 或粘贴论文文本即可自动完成翻译、四维分析、公式解读。'}])
@@ -151,6 +154,7 @@ const chatIn=ref('');const chatReply=ref(null);const chatAttach=ref(null)
 
 const ragQ=ref('retrieval augmented');const ragK=ref(5);const ragTag=ref('');const ragModality=ref('');const ragResults=ref([]);const ragCtx=ref('');const ragSuggest=ref('');const ragSnap=ref({})
 const pfTags=ref('rag,llm');const pf=ref({title:'',abstract:'',content:''})
+const askQ=ref('');const askA=ref('')
 const canSubmit=computed(()=>(upMode.value==='file'&&upFile.value)||(upMode.value==='text'&&upText.value.trim().length>50))
 const hasAnyResult=computed(()=>{const p=pdet.value;if(!p)return false;return !!(p.translation||p.system_model||p.problem_formulation||p.optimization_algorithm||p.experiment_design||p.formula_explanations||p.visualization_html||p.audit)})
 
@@ -235,6 +239,7 @@ async function doRagCtx(){const r=await api('/api/rag/context',{method:'POST',bo
 async function doRagSuggest(){ragSuggest.value=JSON.stringify(await api('/api/rag/suggest',{method:'POST',body:JSON.stringify({query:ragQ.value,top_k:ragK.value})}),null,2)}
 async function doIngest(){const tags=pfTags.value.split(',').map(s=>s.trim()).filter(Boolean);await api('/api/rag/papers',{method:'POST',body:JSON.stringify({...pf.value,tags})});await loadRagPapers()}
 async function doDeletePaper(pid){await api('/api/rag/papers/'+pid,{method:'DELETE'});await loadRagPapers()}
+async function doAsk(){const q=askQ.value.trim();if(!q||!curPaperId.value)return;askA.value='思考中…';try{const r=await api('/api/paper/'+curPaperId.value+'/ask',{method:'POST',body:JSON.stringify({question:q})});askA.value=r.answer||'无回答'}catch(e){askA.value='提问失败: '+e.message}}
 
 watch(tab,t=>{if(t==='papers')loadPapers();if(t==='rag')loadRagPapers()})
 onMounted(loadAll)

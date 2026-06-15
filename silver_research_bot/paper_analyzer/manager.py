@@ -181,15 +181,17 @@ class PaperManager:
                 f"- 优化算法: {p.get('optimization_algorithm', '')[:800]}\n"
                 f"- 实验设计: {p.get('experiment_design', '')[:800]}\n"
             )
+        user_msg = (
+            "\n\n".join(parts) +
+            "\n\n请按以下结构输出对比分析：\n"
+            "## 方法谱系\n## 指标排行榜\n## 趋势时间线\n## 综合差异总结\n"
+        )
         try:
             response = await provider.chat_with_retry(
                 model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": "\n\n".join(parts)},
-                ],
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_msg}],
                 tools=None,
             )
             comparison.synthesis = response.content or ""
         except Exception:
-            comparison.synthesis = "LLM 对比分析不可用，请查看各论文独立分析。"
+            comparison.synthesis = "LLM 对比分析不可用"

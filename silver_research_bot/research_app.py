@@ -398,7 +398,9 @@ def _read_paper_from_fs(paper_dir: Path) -> dict:
     filename_map = {"translation": "translation.md", "system_model": "analysis_system_model.md",
                     "problem_formulation": "analysis_problem.md", "optimization_algorithm": "analysis_algorithm.md",
                     "experiment_design": "analysis_experiment.md", "formula_explanations": "formula_explanations.md",
-                    "visualization_html": "analysis_visualization.html", "audit": "audit_report.json"}
+                    "visualization_html": "analysis_visualization.html", "citation_graph_html": "citation_graph.html",
+                    "review_theory": "review_theory.md", "review_engineering": "review_engineering.md",
+                    "review_domain": "review_domain.md", "audit": "audit_report.json"}
     for key, fn in filename_map.items():
         fp = paper_dir / fn
         if fp.exists():
@@ -536,6 +538,41 @@ async def paper_compare(request: PaperCompareRequest):
         "dimensions": comparison.dimensions,
         "synthesis": comparison.synthesis,
     }
+
+
+class PaperAskRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+
+
+@app.post("/api/paper/{paper_id}/ask")
+async def paper_ask(paper_id: str, request: PaperAskRequest):
+    """交互式分析 — 基于论文产物回答用户问题。"""
+    ws_dir = _paper_manager.papers_dir / paper_id
+    if not ws_dir.is_dir():
+        raise HTTPException(status_code=404, detail="论文未找到")
+    artifacts = {}
+    for key, fname in [("translation","translation.md"),("system_model","analysis_system_model.md"),
+        ("problem_formulation","analysis_problem.md"),("optimization_algorithm","analysis_algorithm.md"),
+        ("experiment_design","analysis_experiment.md"),("formula_explanations","formula_explanations.md")]:
+        fp = ws_dir / fname
+        if fp.exists():
+            artifacts[key] = fp.read_text(encoding="utf-8")[:3000]
+    context = "\n\n".join(f"## {k}\n{v}" for k, v in artifacts.items())
+    if not context:
+        raise HTTPException(status_code=404, detail="论文分析产物不可用")
+    orch = _get_orchestrator()
+    try:
+        response = await orch.provider.chat_with_retry(
+            model=orch.model,
+            messages=[
+                {"role": "system", "content": f"基于以下论文分析产物回答用户问题。\n{context}"},
+                {"role": "user", "content": request.question},
+            ],
+            tools=None, max_tokens=1000, temperature=0.3,
+        )
+        return {"paper_id": paper_id, "question": request.question, "answer": response.content or ""}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.delete("/api/paper/{paper_id}")

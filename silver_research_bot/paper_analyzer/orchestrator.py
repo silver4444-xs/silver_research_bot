@@ -74,6 +74,8 @@ class PaperOrchestrator:
             StageResult(stage_name="analyze"),
             StageResult(stage_name="formula_explain"),
             StageResult(stage_name="visualize"),
+            StageResult(stage_name="citation"),
+            StageResult(stage_name="review"),
             StageResult(stage_name="audit"),
         ])
         _save_plan(plan, paper_dir)
@@ -155,6 +157,39 @@ class PaperOrchestrator:
         })
         _mark(plan, "visualize", "completed")
         self._write_progress(paper_dir, "visualize", "completed", "可视化生成完成")
+
+        # ─── Stage 4a: Citation Graph ───
+        from silver_research_bot.paper_analyzer.citation_graph import extract_references, build_citation_html
+
+        self._write_progress(paper_dir, "citation", "running", "正在构建引用图谱…")
+        _mark(plan, "citation", "running")
+        try:
+            refs = await extract_references(full_text, self.provider, self.model)
+            cit_html = await build_citation_html(refs, meta_dict["title"], self.provider, self.model)
+            (paper_dir / "citation_graph.html").write_text(cit_html, encoding="utf-8")
+            artifacts.append({"name": "citation_graph.html", "path": str(paper_dir / "citation_graph.html"), "kind": "citation"})
+            _mark(plan, "citation", "completed")
+            self._write_progress(paper_dir, "citation", "completed", f"引用图谱生成完成，{len(refs)}篇参考文献")
+        except Exception as e:
+            _mark(plan, "citation", "completed")
+            self._write_progress(paper_dir, "citation", "completed", f"引用图谱跳过: {e}")
+
+        # ─── Stage 4b: A/B Review ───
+        from silver_research_bot.paper_analyzer.reviewer import generate_reviews
+
+        self._write_progress(paper_dir, "review", "running", "正在多视角审稿…")
+        _mark(plan, "review", "running")
+        try:
+            reviews = await generate_reviews(full_text, meta_dict["title"], self.provider, self.model)
+            for key, text in reviews.items():
+                fname = f"review_{key}.md"
+                (paper_dir / fname).write_text(text, encoding="utf-8")
+                artifacts.append({"name": fname, "path": str(paper_dir / fname), "kind": "review"})
+            _mark(plan, "review", "completed")
+            self._write_progress(paper_dir, "review", "completed", f"三视角审稿完成")
+        except Exception as e:
+            _mark(plan, "review", "completed")
+            self._write_progress(paper_dir, "review", "completed", f"审稿跳过: {e}")
 
         # ─── Stage 4: Audit ───
         from silver_research_bot.paper_analyzer.auditor import audit_analysis
