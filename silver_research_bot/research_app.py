@@ -52,6 +52,8 @@ class RagSearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
     tag: str | None = None
+    modality: str | None = None  # "text" | "formula" | "figure" | "table" | None (all)
+    rerank: bool = True
 
 
 class RagContextRequest(BaseModel):
@@ -70,6 +72,28 @@ app.add_middleware(
 
 engine = ResearchCore()
 rag = ResearchRAG()
+_rag_initialized = False
+
+
+def _get_rag() -> ResearchRAG:
+    global rag, _rag_initialized
+    if not _rag_initialized:
+        from silver_research_bot.config.loader import load_config, resolve_config_env_vars
+        config = resolve_config_env_vars(load_config())
+        provider = None
+        try:
+            from silver_research_bot.providers.openai_compat_provider import OpenAICompatProvider
+            defaults = config.agents.defaults
+            provider = OpenAICompatProvider(
+                api_key=config.get_api_key(defaults.model),
+                api_base=config.get_api_base(defaults.model),
+                default_model=defaults.model,
+            )
+        except Exception:
+            pass
+        rag = ResearchRAG(provider=provider, config=config.rag)
+        _rag_initialized = True
+    return rag
 
 
 @app.get("/api/health")
@@ -165,13 +189,13 @@ def add_note(run_id: str, payload: dict[str, str]) -> dict[str, Any]:
 
 @app.get("/api/rag/papers")
 def list_papers() -> list[dict[str, Any]]:
-    return rag.list_papers()
+    return _get_rag().list_papers()
 
 
 @app.post("/api/rag/papers")
-def add_paper(request: PaperIngestRequest) -> dict[str, Any]:
+async def add_paper(request: PaperIngestRequest) -> dict[str, Any]:
     try:
-        return rag.add_paper(
+        return await _get_rag().add_paper(
             title=request.title,
             abstract=request.abstract,
             content=request.content,
@@ -184,27 +208,30 @@ def add_paper(request: PaperIngestRequest) -> dict[str, Any]:
 
 
 @app.post("/api/rag/search")
-def rag_search(request: RagSearchRequest) -> dict[str, Any]:
+async def rag_search(request: RagSearchRequest) -> dict[str, Any]:
     try:
-        return rag.search(request.query, top_k=request.top_k, tag=request.tag)
+        return await _get_rag().search(
+            request.query, top_k=request.top_k, tag=request.tag,
+            modality=request.modality, rerank=request.rerank,
+        )
     except Exception as exc:
         logger.exception("RAG 检索失败")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/rag/context")
-def rag_context(request: RagContextRequest) -> dict[str, Any]:
+async def rag_context(request: RagContextRequest) -> dict[str, Any]:
     try:
-        return rag.build_context(request.query, top_k=request.top_k)
+        return await _get_rag().build_context(request.query, top_k=request.top_k)
     except Exception as exc:
         logger.exception("RAG 上下文构建失败")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/rag/suggest")
-def rag_suggest(request: RagContextRequest) -> dict[str, Any]:
+async def rag_suggest(request: RagContextRequest) -> dict[str, Any]:
     try:
-        return rag.suggest_research(request.query, top_k=request.top_k)
+        return await _get_rag().suggest_research(request.query, top_k=request.top_k)
     except Exception as exc:
         logger.exception("RAG 建议生成失败")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -212,7 +239,36 @@ def rag_suggest(request: RagContextRequest) -> dict[str, Any]:
 
 @app.get("/api/rag/snapshot")
 def rag_snapshot() -> dict[str, Any]:
-    return rag.export_snapshot()
+    return _get_rag().export_snapshot()
+
+
+@app.put("/api/rag/papers/{paper_id}")
+async def rag_update(paper_id: str, request: PaperIngestRequest) -> dict[str, Any]:
+    try:
+        return await _get_rag().update_paper(
+            paper_id=paper_id, title=request.title, abstract=request.abstract,
+            content=request.content, authors=request.authors, tags=request.tags,
+        )
+    except Exception as exc:
+        logger.exception("文献更新失败")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.delete("/api/rag/papers/{paper_id}")
+def rag_delete(paper_id: str) -> dict[str, Any]:
+    ok = _get_rag().delete_paper(paper_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="文献未找到")
+    return {"status": "deleted", "paper_id": paper_id}
+
+
+@app.post("/api/rag/reindex")
+async def rag_reindex() -> dict[str, Any]:
+    try:
+        return await _get_rag().reindex()
+    except Exception as exc:
+        logger.exception("RAG 重建索引失败")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/agent/chat")

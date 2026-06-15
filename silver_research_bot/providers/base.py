@@ -332,6 +332,45 @@ class LLMProvider(ABC):
         """
         pass
 
+    @abstractmethod
+    async def embed(self, text: str, model: str | None = None) -> list[float]:
+        """返回单个文本的嵌入向量。"""
+        pass
+
+    @abstractmethod
+    async def embed_batch(
+        self, texts: list[str], model: str | None = None
+    ) -> list[list[float]]:
+        """返回批量文本的嵌入向量列表。"""
+        pass
+
+    async def embed_batch_with_retry(
+        self,
+        texts: list[str],
+        model: str | None = None,
+        retry_mode: str = "standard",
+        on_retry_wait: Callable[[str], Awaitable[None]] | None = None,
+    ) -> list[list[float]]:
+        """在临时提供程序故障时对 embed_batch 进行重试。"""
+        delays = self._retry_delays(retry_mode)
+        last_exc = None
+        for attempt, delay in enumerate(delays, start=1):
+            try:
+                return await self.embed_batch(texts=texts, model=model)
+            except NotImplementedError:
+                raise
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                if attempt == len(delays):
+                    break
+            logger.warning(f"Embed retry {attempt}/{len(delays)} in {delay:.1f}s")
+            if on_retry_wait:
+                await on_retry_wait(f"Retrying embed in {delay:.0f}s")
+            await asyncio.sleep(delay)
+        raise RuntimeError(f"All embed retries exhausted") from last_exc
+
     @classmethod
     def _is_transient_error(cls, content: str | None) -> bool:
         """ 临时错误判断:将响应文本转为小写，检查是否包含 _TRANSIENT_ERROR_MARKERS 中的任一标记（如 "timeout"、"rate limit"、"429" 等）"""

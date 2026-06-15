@@ -288,6 +288,26 @@ class ToolsConfig(Base):
     ssrf_whitelist: list[str] = Field(default_factory=list)  # CIDR ranges to exempt from SSRF blocking (e.g. ["100.64.0.0/10"] for Tailscale)
     'SSRF 黑名单的白名单 CIDR 范围（例如 Tailscale 网段）'
 
+
+class RAGConfig(Base):
+    """RAG 检索增强生成配置"""
+
+    embedding_model: str = "text-embedding-3-small"
+    '嵌入模型名称'
+    embedding_dimensions: int = 1536
+    '嵌入向量维度'
+    bm25_weight: float = Field(default=0.3, ge=0.0, le=1.0)
+    'BM25 关键词匹配权重 (0-1)'
+    vector_weight: float = Field(default=0.7, ge=0.0, le=1.0)
+    '向量相似度权重 (0-1)'
+    coarse_top_k: int = Field(default=20, ge=1, le=100)
+    '粗排候选数'
+    final_top_k: int = Field(default=5, ge=1, le=20)
+    '精排最终返回数'
+    rerank_enabled: bool = True
+    '是否启用 LLM 重排序'
+
+
 class Config(BaseSettings):
     """
         Root配置
@@ -301,6 +321,7 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    rag: RAGConfig = Field(default_factory=RAGConfig)
 
     @property
     def workspace_path(self) -> Path:

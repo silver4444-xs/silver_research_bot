@@ -1209,3 +1209,26 @@ class OpenAICompatProvider(LLMProvider):
 
     def get_default_model(self) -> str:
         return self.default_model
+
+    async def embed(self, text: str, model: str | None = None) -> list[float]:
+        result = await self.embed_batch([text], model=model)
+        return result[0] if result else []
+
+    async def embed_batch(
+        self, texts: list[str], model: str | None = None
+    ) -> list[list[float]]:
+        if not texts:
+            return []
+        model_name = model or "text-embedding-3-small"
+        model_name = self._strip_provider_prefix(model_name)
+        all_embeddings: list[list[float]] = []
+        for i in range(0, len(texts), 100):
+            batch = texts[i:i + 100]
+            try:
+                resp = await self._client.embeddings.create(
+                    input=batch, model=model_name,
+                )
+                all_embeddings.extend([d.embedding for d in resp.data])
+            except Exception as e:
+                raise RuntimeError(f"Embedding API call failed: {e}") from e
+        return all_embeddings
