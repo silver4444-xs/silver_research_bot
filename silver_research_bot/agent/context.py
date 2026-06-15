@@ -39,29 +39,23 @@ class ContextBuilder:
         '技能加载器，管理可动态激活的提示模块'
 
     def build_system_prompt(
-        self,
-        skill_names: list[str] | None = None,
-        channel: str | None = None,
+        self, skill_names=None, channel=None,
+        active_memory_text=None, project_memory_text=None,
     ) -> str:
-        """
-        构建系统提示
-        组装顺序（最终通过 "\n\n---\n\n".join(parts) 连接）：
-        1.身份标识：_get_identity 生成包含工作路径、操作系统版本、运行时的基本信息。
-        2.引导文件：读取 BOOTSTRAP_FILES 中存在的文件内容并嵌入。
-        3.长期记忆上下文：若 memory.get_memory_context() 有内容，且用户尚未修改默认的 MEMORY.md，则添加 # Memory 块。
-        4.常驻技能：always_skills 总是生效的技能，直接加载其内容。
-        5.技能概览：构建一个可用技能的摘要列表（方便 LLM 了解能调用哪些技能）。
-        6.近期历史：从 memory 读取未被 “dream” 处理过的历史条目，最多 _MAX_RECENT_HISTORY 条，按时间列出。
-        """
         parts = [self._get_identity(channel=channel)]
-
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
             parts.append(bootstrap)
-
-        memory = self.memory.get_memory_context()
-        if memory and not self._is_template_content(self.memory.read_memory(), "memory/MEMORY.md"):
-            parts.append(f"# Memory\n\n{memory}")
+        memory_blocks = []
+        if active_memory_text:
+            memory_blocks.append(active_memory_text)
+        if project_memory_text:
+            memory_blocks.append(f”## Project Memory\n\n{project_memory_text}”)
+        long_term = self.memory.get_memory_context()
+        if long_term and not self._is_template_content(self.memory.read_memory(), “memory/MEMORY.md”):
+            memory_blocks.append(f”## Long-term Memory\n\n{long_term}”)
+        if memory_blocks:
+            parts.append(“# Memory\n\n” + “\n\n”.join(memory_blocks))
 
         always_skills = self.skills.get_always_skills()
         if always_skills:

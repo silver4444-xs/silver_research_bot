@@ -25,6 +25,72 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# MemoryEntry — 结构化的长期记忆条目
+# ---------------------------------------------------------------------------
+
+import re as _re
+from dataclasses import dataclass, field as _field
+
+_META_TAG_RE = _re.compile(
+    r"<!--\s*uid:(?P<uid>\S+)\s+imp:(?P<imp>\d+)\s+"
+    r"ts:(?P<ts>\S+)\s+acc:(?P<acc>\S+)\s*-->"
+)
+
+
+@dataclass
+class MemoryEntry:
+    """单条长期记忆，附重要性评分、时间戳和访问追踪。"""
+
+    uid: str
+    text: str
+    importance: int = 5  # 1-10
+    created_at: str = ""  # ISO timestamp
+    last_accessed: str = ""  # ISO timestamp
+
+    @staticmethod
+    def parse_memory_content(content: str) -> list["MemoryEntry"]:
+        """从 MEMORY.md 完整内容解析所有条目。"""
+        entries = []
+        # Split by double newline or markdown bullets
+        lines = content.split("\n")
+        current_text: list[str] = []
+        for line in lines:
+            m = _META_TAG_RE.search(line)
+            if m and current_text:
+                text = "\n".join(current_text).strip()
+                if text:
+                    entries.append(MemoryEntry(
+                        uid=m.group("uid"),
+                        text=text,
+                        importance=int(m.group("imp")),
+                        created_at=m.group("ts"),
+                        last_accessed=m.group("acc"),
+                    ))
+                current_text = [line]
+            else:
+                current_text.append(line)
+        # Handle last block
+        remaining = "\n".join(current_text).strip()
+        if remaining:
+            m = _META_TAG_RE.search(remaining)
+            if m:
+                text = _META_TAG_RE.sub("", remaining).strip()
+                entries.append(MemoryEntry(
+                    uid=m.group("uid"),
+                    text=text,
+                    importance=int(m.group("imp")),
+                    created_at=m.group("ts"),
+                    last_accessed=m.group("acc"),
+                ))
+        return entries
+
+    def format_line(self) -> str:
+        """生成带元数据标签的单行条目。"""
+        tag = f"<!-- uid:{self.uid} imp:{self.importance} ts:{self.created_at} acc:{self.last_accessed} -->"
+        return f"{self.text} {tag}"
+
+
+# ---------------------------------------------------------------------------
 # MemoryStore — pure file I/O layer
 # ---------------------------------------------------------------------------
 
@@ -413,6 +479,78 @@ class MemoryStore:
             "Memory consolidation degraded: raw-archived {} messages", len(messages)
         )
 
+    # -- memory entry management -------------------------------------------
+
+    def parse_memory_entries(self) -> list[MemoryEntry]:
+        """解析 MEMORY.md 为结构化条目列表。"""
+        content = self.read_file(self.memory_file)
+        if not content.strip():
+            return []
+        return MemoryEntry.parse_memory_content(content)
+
+    def update_entry(self, uid: str, new_text: str, new_importance: int | None = None) -> bool:
+        entries = self.parse_memory_entries()
+        found = False
+        new_lines = []
+        for entry in entries:
+            if entry.uid == uid and not found:
+                entry.text = new_text
+                if new_importance is not None:
+                    entry.importance = new_importance
+                entry.last_accessed = _utc_iso()
+                found = True
+            new_lines.append(entry.format_line())
+        if found:
+            self.memory_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+        return found
+
+    def delete_entry(self, uid: str) -> bool:
+        entries = self.parse_memory_entries()
+        new_entries = [e for e in entries if e.uid != uid]
+        if len(new_entries) == len(entries):
+            return False
+        new_lines = [e.format_line() for e in new_entries]
+        self.memory_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+        return True
+
+    def touch_entry(self, uid: str) -> None:
+        entries = self.parse_memory_entries()
+        now = _utc_iso()
+        new_lines = []
+        for entry in entries:
+            if entry.uid == uid:
+                entry.last_accessed = now
+            new_lines.append(entry.format_line())
+        self.memory_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+    def get_entries_by_importance(self, min_score: int = 3) -> list[MemoryEntry]:
+        return [e for e in self.parse_memory_entries() if e.importance >= min_score]
+
+    def load_project_memory(self, project_id: str) -> "MemoryStore | None":
+        project_dir = self.workspace.parent / "project_memory" / project_id
+        project_dir.mkdir(parents=True, exist_ok=True)
+        mem_file = project_dir / "MEMORY.md"
+        if not mem_file.exists():
+            mem_file.write_text("", encoding="utf-8")
+        store = MemoryStore.__new__(MemoryStore)
+        store.workspace = project_dir
+        store.memory_dir = ensure_dir(project_dir / "memory")
+        store.memory_file = mem_file
+        store.history_file = store.memory_dir / "history.jsonl"
+        store.legacy_history_file = store.memory_dir / "HISTORY.md"
+        store.soul_file = project_dir / "SOUL.md"
+        store.user_file = project_dir / "USER.md"
+        store._cursor_file = store.memory_dir / ".cursor"
+        store._dream_cursor_file = store.memory_dir / ".dream_cursor"
+        store._corruption_logged = False
+        store.max_history_entries = self.max_history_entries
+        store._git = GitStore.__new__(GitStore)
+        return store
+
+
+def _utc_iso() -> str:
+    from datetime import timezone as _tz
+    return datetime.now(_tz.utc).isoformat()
 
 
 # ---------------------------------------------------------------------------

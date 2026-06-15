@@ -85,6 +85,27 @@ class DreamConfig(Base):
         return f"every {hours}h"
 
 
+class MemoryConfig(Base):
+    """Agent 记忆系统配置 — 重要性评分、分层管理、遗忘曲线、冲突检测、主动检索"""
+
+    short_term_window: int = Field(default=20, ge=5, le=200)
+    '短期对话缓存轮数'
+    importance_threshold: float = Field(default=3.0, ge=1.0, le=10.0)
+    '压缩/归档时保留的最低重要性分数 (1-10)'
+    decay_halflife_days: float = Field(default=7.0, ge=1.0, le=365.0)
+    'Ebbinghaus 遗忘曲线半衰期（天）'
+    consolidation_interval_hours: float = Field(default=2.0, ge=0.5, le=48.0)
+    '记忆巩固检查间隔（小时）'
+    conflict_detection_enabled: bool = True
+    '新记忆写入时是否做语义冲突检测'
+    active_retrieval_enabled: bool = True
+    '每轮对话前是否主动检索相关记忆'
+    active_retrieval_top_k: int = Field(default=3, ge=1, le=10)
+    '主动检索注入的记忆条数'
+    project_memory_enabled: bool = True
+    '是否启用跨会话项目记忆共享'
+
+
 class AgentDefaults(Base):
     """Agent 默认配置"""
 
@@ -126,6 +147,8 @@ class AgentDefaults(Base):
     '空闲会话自动压缩的阈值（分钟），0 为禁用。支持别名 idleCompactAfterMinutes 和 sessionTtlMinutes，序列化时输出为 idleCompactAfterMinutes'
     dream: DreamConfig = Field(default_factory=DreamConfig)
     '记忆整合（Dream）配置，嵌套结构'
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    '记忆系统配置，控制分层、遗忘、冲突检测和主动检索'
 
 class AgentsConfig(Base):
     """Agent 配置容器"""

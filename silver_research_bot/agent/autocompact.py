@@ -14,21 +14,19 @@ if TYPE_CHECKING:
 
 
 class AutoCompact:
-    _RECENT_SUFFIX_MESSAGES = 8
-    '在压缩时，会保留会话末尾的若干条消息（最近的消息）不压缩，供下次对话时直接使用。这里默认保留最近 8 条消息'
+    _RECENT_SUFFIX_MESSAGES = 8（默认保留的会话末尾消息数量）
 
     def __init__(self, sessions: SessionManager, consolidator: Consolidator,
-                 session_ttl_minutes: int = 0):
+                 session_ttl_minutes: int = 0,
+                 memory_config: Any | None = None,
+                 memory_scorer: Any | None = None):
         self.sessions = sessions
-        '会话管理器，用于获取、保存会话'
         self.consolidator = consolidator
-        '实际执行摘要生成的组件（负责调用 LLM 将消息列表转换为摘要文本）'
         self._ttl = session_ttl_minutes
-        '会话空闲存活时间（分钟），若 <= 0 表示永不自动过期'
         self._archiving: set[str] = set()
-        '集合，记录正在被归档的会话键，防止并发重复归档'
         self._summaries: dict[str, tuple[str, datetime]] = {}
-        '内存中的摘要缓存，键为会话键，值为 (摘要文本, 上次活跃时间)'
+        self._importance_threshold = getattr(memory_config, "importance_threshold", 3.0) if memory_config else 3.0
+        self._scorer = memory_scorer
 
     def _is_expired(self, ts: datetime | str | None,
                     now: datetime | None = None) -> bool:
