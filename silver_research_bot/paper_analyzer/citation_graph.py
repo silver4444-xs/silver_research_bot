@@ -79,9 +79,29 @@ async def build_citation_html(
 
 
 def _wrap(mermaid: str, title: str) -> str:
+    # D3.js interactive force-directed citation graph
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>body{{font-family:system-ui;background:#0A0B1F;color:#e0e0e0;padding:24px}}
-h1{{color:#c4b5fd}} .mermaid{{background:#111338;border-radius:12px;padding:16px;margin-top:16px}}</style>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-<script>mermaid.initialize({{startOnLoad:true,theme:'dark'}})</script></head><body>
-<h1>Citation Graph: {title}</h1><pre class="mermaid">{mermaid}</pre></body></html>"""
+<style>body{{font-family:system-ui;background:#0A0B1F;color:#e0e0e0;padding:24px;margin:0}}
+h1{{color:#c4b5fd;font-size:1.2rem}} #graph{{width:100%;height:70vh;border-radius:12px;background:#111338}}
+.links line{{stroke:#555;stroke-opacity:0.6}} .nodes circle{{stroke:#fff;stroke-width:1.5px;cursor:pointer}}
+.nodes text{{fill:#c0c0d0;font-size:10px}}</style></head><body>
+<h1>Citation Graph: {title} <span style="font-size:12px;color:#888">(drag nodes | scroll to zoom)</span></h1>
+<div id="graph"></div>
+<script src="https://d3js.org/d3.v7.min.js"></script><script>
+const colors={{paper:"#534AB7",foundation:"#E6F1FB",comparison:"#FAEEDA",background:"#EAF3DE"}};
+const nodes=[],links=[];
+const ls=`{mermaid}`.split("\\n");
+for(const l of ls){{const nm=l.match(/^\\s*(\\w+)\\[/);const ar=l.match(/^\\s*(\\w+)\\s*-->\\s*(\\w+)/);
+if(nm&&nm[1]!=="P")nodes.push({{id:nm[1],group:"background"}});
+if(ar)links.push({{source:ar[1],target:ar[2]}});
+const cl=l.match(/:::(\\w+)/);if(cl&&nodes.length)nodes[nodes.length-1].group=cl[1];}}
+nodes.unshift({{id:"Paper",group:"paper"}});
+const W=800,H=500,svg=d3.select("#graph").append("svg").attr("viewBox",`0 0 ${{W}} ${{H}}`).style("background","#111338").style("border-radius","12px");
+const g=svg.append("g"),sim=d3.forceSimulation(nodes).force("link",d3.forceLink(links).id(d=>d.id).distance(100)).force("charge",d3.forceManyBody().strength(-300)).force("center",d3.forceCenter(W/2,H/2));
+const link=g.selectAll("line").data(links).join("line").attr("stroke","#555").attr("stroke-opacity",0.6).attr("stroke-width",1.5);
+const node=g.selectAll(".node").data(nodes).join("g").attr("class","node").call(d3.drag().on("start",(e,d)=>{{if(!e.active)sim.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y;}}).on("drag",(e,d)=>{{d.fx=e.x;d.fy=e.y;}}).on("end",(e,d)=>{{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null;}}));
+node.append("circle").attr("r",d=>d.id==="Paper"?14:9).attr("fill",d=>colors[d.group]||"#666").append("title").text(d=>d.id+"\\n"+d.group);
+node.append("text").text(d=>d.id).attr("dx",16).attr("dy",4).style("fill","#c0c0d0").style("font-size","10px");
+sim.on("tick",()=>{{link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y).attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);node.attr("transform",d=>`translate(${{d.x}},${{d.y}})`);}});
+svg.call(d3.zoom().scaleExtent([0.5,3]).on("zoom",e=>g.attr("transform",e.transform)));
+</script></body></html>"""

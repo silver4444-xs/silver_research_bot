@@ -106,7 +106,7 @@
   </section>
 
   <!-- ═══ Original ═══ -->
-  <header class="hero"><div><p class="eyebrow">Paper Analysis Platform</p><h2>研究论文深度分析工作台</h2><p class="subtitle">上传 PDF 或粘贴文本即可自动翻译、四维系统分析、公式解读与可视化审计。</p></div><div class="sbar"><div class="si"><strong>API</strong><span><span class="dot" :class="apiOk?'dot-ok':'dot-warn'"></span>{{ apiStatus }}</span></div><div class="si"><strong>已分析</strong><span>{{ papers.length }} 篇</span></div><button class="btn bp bsm" @click="loadAll">刷新</button></div></header>
+  <header class="hero"><div><p class="eyebrow">{{ t('eyebrow') }}</p><h2>{{ t('title') }}</h2><p class="subtitle">{{ t('subtitle') }}</p><div class="row" style="gap:8px;margin-top:8px"><button class="btn bg bsm" @click="lang=lang==='zh'?'en':'zh'">{{ lang==='zh'?'EN':'中文' }}</button></div></div><div class="sbar"><div class="si"><strong>{{ t('api') }}</strong><span><span class="dot" :class="apiOk?'dot-ok':'dot-warn'"></span>{{ apiStatus }}</span></div><div class="si"><strong>{{ t('analyzed') }}</strong><span>{{ papers.length }} 篇</span></div><div class="si"><strong>公式</strong><span>{{ totalFormulas }} 个</span></div><div class="si"><strong>图表</strong><span>{{ totalFigures }} 张</span></div><button class="btn bp bsm" @click="loadAll">{{ t('refresh') }}</button></div></header>
 
 
   <section v-if="tab==='agent'" class="chat-container">
@@ -154,7 +154,10 @@ const chatIn=ref('');const chatReply=ref(null);const chatAttach=ref(null)
 
 const ragQ=ref('retrieval augmented');const ragK=ref(5);const ragTag=ref('');const ragModality=ref('');const ragResults=ref([]);const ragCtx=ref('');const ragSuggest=ref('');const ragSnap=ref({})
 const pfTags=ref('rag,llm');const pf=ref({title:'',abstract:'',content:''})
+const lang=ref('zh');const LOCALE={zh:{eyebrow:'论文分析平台',title:'研究论文深度分析工作台',subtitle:'上传 PDF 即可自动翻译、四维分析、公式解读与可视化审计。',api:'API',analyzed:'已分析',refresh:'刷新'},en:{eyebrow:'Paper Analysis Platform',title:'Research Paper Analysis Workbench',subtitle:'Upload PDF for auto translation, 4D analysis, formula explanation & audit.',api:'API',analyzed:'Analyzed',refresh:'Refresh'}};function t(k){return (LOCALE[lang.value]||LOCALE.zh)[k]||k}
 const askQ=ref('');const askA=ref('')
+const totalFormulas=computed(()=>papers.value.reduce((s,p)=>s+(p.formula_count||0),0))
+const totalFigures=computed(()=>papers.value.reduce((s,p)=>s+(p.figure_count||0),0))
 const canSubmit=computed(()=>(upMode.value==='file'&&upFile.value)||(upMode.value==='text'&&upText.value.trim().length>50))
 const hasAnyResult=computed(()=>{const p=pdet.value;if(!p)return false;return !!(p.translation||p.system_model||p.problem_formulation||p.optimization_algorithm||p.experiment_design||p.formula_explanations||p.visualization_html||p.audit)})
 
