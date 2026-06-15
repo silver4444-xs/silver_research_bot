@@ -7,7 +7,7 @@ from typing import Any
 import asyncio
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -580,6 +580,35 @@ def paper_delete(paper_id: str):
     if not _paper_manager.delete_paper(paper_id):
         raise HTTPException(status_code=404, detail="论文未找到")
     return {"status": "deleted", "paper_id": paper_id}
+
+
+@app.websocket("/api/paper/{paper_id}/stream")
+async def paper_stream(websocket: WebSocket, paper_id: str):
+    """WebSocket 端点 — 实时推送论文分析各阶段进度和中间结果。"""
+    await websocket.accept()
+    ws_dir = _paper_manager.papers_dir / paper_id
+    try:
+        last_stage = ""
+        while True:
+            pf = ws_dir / "progress.json"
+            current = ""
+            if pf.exists():
+                import json as _j
+                data = _j.loads(pf.read_text(encoding="utf-8"))
+                current = data.get("stage", "")
+                msg = data.get("message", "")
+                status = data.get("status", "")
+                if current != last_stage:
+                    await websocket.send_json({"stage": current, "message": msg, "status": status})
+                    last_stage = current
+                if status in ("completed", "failed") and current == "audit":
+                    await websocket.send_json({"stage": "done", "message": "Pipeline complete", "status": "done"})
+                    break
+            await asyncio.sleep(1.5)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
 
 
 @app.get("/")
