@@ -312,6 +312,15 @@ class ToolsConfig(Base):
     'SSRF 黑名单的白名单 CIDR 范围（例如 Tailscale 网段）'
 
 
+class PaperSearchConfig(Base):
+    """论文数据库搜索配置"""
+
+    pubmed_email: str = ""
+    'PubMed Entrez API 所需邮箱（NCBI 速率限制要求）'
+    semantic_scholar_api_key: str = ""
+    'Semantic Scholar API Key（可选，提升速率限制）'
+
+
 class RAGConfig(Base):
     """RAG 检索增强生成配置"""
 
@@ -345,6 +354,7 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     rag: RAGConfig = Field(default_factory=RAGConfig)
+    paper_search: PaperSearchConfig = Field(default_factory=PaperSearchConfig)
 
     @property
     def workspace_path(self) -> Path:

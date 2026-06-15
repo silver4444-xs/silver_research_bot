@@ -34,6 +34,7 @@ from silver_research_bot.agent.tools.shell import ExecTool
 from silver_research_bot.agent.tools.self import MyTool
 from silver_research_bot.agent.tools.spawn import SpawnTool
 from silver_research_bot.agent.tools.web import WebFetchTool, WebSearchTool
+from silver_research_bot.agent.tools.paper_search import PaperSearchTool
 from silver_research_bot.bus.events import InboundMessage, OutboundMessage
 from silver_research_bot.bus.queue import MessageBus
 from silver_research_bot.command import CommandContext, CommandRouter, register_builtin_commands
@@ -354,6 +355,11 @@ class AgentLoop:
                 WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy)
             )
             self.tools.register(WebFetchTool(proxy=self.web_config.proxy))
+        # Paper search tool (arXiv, Semantic Scholar, PubMed, DBLP)
+        paper_cfg = getattr(self._config, "paper_search", None)
+        pubmed_email = getattr(paper_cfg, "pubmed_email", "") if paper_cfg else ""
+        ss_key = getattr(paper_cfg, "semantic_scholar_api_key", "") if paper_cfg else ""
+        self.tools.register(PaperSearchTool(pubmed_email=pubmed_email, semantic_scholar_key=ss_key))
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:
