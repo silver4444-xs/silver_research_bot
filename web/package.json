@@ -1,0 +1,1 @@
+{"name":"silver-research-web","private":true,"version":"0.3.0","type":"module","scripts":{"dev":"vite","build":"vite build"},"dependencies":{"vue":"^3.5.13"},"devDependencies":{"vite":"^6.1.0","@vitejs/plugin-vue":"^5.2.1"}}

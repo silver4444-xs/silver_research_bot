@@ -1,0 +1,71 @@
+"""对内置通道模块和外部插件的自动检测。"""
+
+from __future__ import annotations
+
+import importlib
+import pkgutil
+from typing import TYPE_CHECKING
+
+from loguru import logger
+
+if TYPE_CHECKING:
+    from silver_research_bot.channels.base import BaseChannel
+
+_INTERNAL = frozenset({"base", "manager", "registry"})
+
+
+def discover_channel_names() -> list[str]:
+    """通过扫描包（不进行任何导入）返回所有内置通道模块的名称。"""
+    import silver_research_bot.channels as pkg
+
+    return [
+        name
+        for _, name, ispkg in pkgutil.iter_modules(pkg.__path__)
+        if name not in _INTERNAL and not ispkg
+    ]
+
+
+def load_channel_class(module_name: str) -> type[BaseChannel]:
+    """导入 *module_name* 并返回找到的第一个 BaseChannel 子类."""
+    from silver_research_bot.channels.base import BaseChannel as _Base
+
+    mod = importlib.import_module(f"silver_research_bot.channels.{module_name}")
+    for attr in dir(mod):
+        obj = getattr(mod, attr)
+        if isinstance(obj, type) and issubclass(obj, _Base) and obj is not _Base:
+            return obj
+    raise ImportError(f"No BaseChannel subclass in silver_research_bot.channels.{module_name}")
+
+
+def discover_plugins() -> dict[str, type[BaseChannel]]:
+    """发现通过 entry_points 注册的外部通道插件."""
+    from importlib.metadata import entry_points
+
+    plugins: dict[str, type[BaseChannel]] = {}
+    for ep in entry_points(group="silver_research_bot.channels"):
+        try:
+            cls = ep.load()
+            plugins[ep.name] = cls
+        except Exception as e:
+            logger.warning("Failed to load channel plugin '{}': {}", ep.name, e)
+    return plugins
+
+
+def discover_all() -> dict[str, type[BaseChannel]]:
+    """返回所有通道：内置通道（pkgutil）与外部通道（entry_points）已合并。
+
+    内置通道具有优先级——外部插件无法覆盖内置通道的名称。
+    """
+    builtin: dict[str, type[BaseChannel]] = {}
+    for modname in discover_channel_names():
+        try:
+            builtin[modname] = load_channel_class(modname)
+        except ImportError as e:
+            logger.debug("Skipping built-in channel '{}': {}", modname, e)
+
+    external = discover_plugins()
+    shadowed = set(external) & set(builtin)
+    if shadowed:
+        logger.warning("Plugin(s) shadowed by built-in channels (ignored): {}", shadowed)
+
+    return {**external, **builtin}

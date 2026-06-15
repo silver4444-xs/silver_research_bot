@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node
+web/node_modules/
+web/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project — local config / secrets
+*.local.json
+.env
+.env.*
+
+# Workspace data (generated at runtime)
+workspace/
+~/.silver_research_bot/
+
+# Backup copies
+*- 副本/
+*copy/
+
+# RAG corpus (runtime data)
+corpus.jsonl
+logs.jsonl
+
+# Logs
+*.log
+
+# Internal harness state
+.superpowers/
+
+# Ruff
+.ruff_cache/
+
+# Crash dumps
+*.stackdump
+
+# Temp
+tmp/
+/tmp/
+
+# Screenshots / random images in root
+*.png
+*.jpg

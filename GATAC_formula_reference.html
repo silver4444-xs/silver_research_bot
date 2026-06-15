@@ -1,0 +1,397 @@
+
+<style>
+.sec-title{font-size:13px;font-weight:500;color:var(--color-text-secondary);letter-spacing:.04em;padding:1.5rem 0 .5rem;border-top:.5px solid var(--color-border-tertiary);margin-top:.5rem}
+.sec-title:first-of-type{border-top:none;padding-top:.5rem}
+.frow{display:grid;grid-template-columns:56px 1fr;gap:0;border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);margin-bottom:8px;overflow:hidden;background:var(--color-background-primary)}
+.frow:hover{border-color:var(--color-border-secondary)}
+.fnum{display:flex;align-items:center;justify-content:center;background:var(--color-background-secondary);font-size:12px;font-weight:500;color:var(--color-text-secondary);border-right:.5px solid var(--color-border-tertiary);padding:10px 6px;min-height:52px}
+.fbody{padding:10px 14px}
+.ftag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;font-weight:500;margin-bottom:5px}
+.tag-sys{background:#E6F1FB;color:#0C447C}
+.tag-mdp{background:#EEEDFE;color:#3C3489}
+.tag-alg{background:#FAEEDA;color:#633806}
+.tag-rwd{background:#FAECE7;color:#712B13}
+.tag-gat{background:#E1F5EE;color:#085041}
+.tag-obs{background:#FBEAF0;color:#72243E}
+.fexpr{font-family:var(--font-mono);font-size:12px;color:var(--color-text-secondary);margin-bottom:4px;opacity:.85}
+.fmean{font-size:13px;color:var(--color-text-primary);line-height:1.55}
+.fmean b{font-weight:500}
+</style>
+
+<h2 class="sr-only">GATAC论文全部公式逐条含义解析</h2>
+
+<p class="sec-title">系统状态描述</p>
+
+<div class="frow">
+<div class="fnum">式 1</div>
+<div class="fbody">
+<span class="ftag tag-sys">系统模型</span>
+<div class="fexpr">pᵢ(t) = [xᵢ(t), yᵢ(t), zᵢ(t)] ∈ ℝ³</div>
+<div class="fmean">无人机 i 在时隙 t 的<b>三维空间坐标</b>，是后续所有距离、通信、能耗计算的基础变量。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 2</div>
+<div class="fbody">
+<span class="ftag tag-sys">系统模型</span>
+<div class="fexpr">pₖ(t) = [xₖ(t), yₖ(t)] ∈ ℝ²</div>
+<div class="fmean">第 k 个地面搜索目标的<b>二维坐标</b>（目标贴地，无高度维度），用于计算UAV与目标的水平距离。</div>
+</div>
+</div>
+
+<p class="sec-title">通信模型</p>
+
+<div class="frow">
+<div class="fnum">式 3</div>
+<div class="fbody">
+<span class="ftag tag-sys">通信模型</span>
+<div class="fexpr">Lᵢʲ_avg = P_LoS × L_LoS + (1 − P_LoS) × L_NLoS</div>
+<div class="fmean">UAV i 与 j 之间的<b>平均路径损耗</b> = 视距链路损耗 × 视距概率 + 非视距链路损耗 × 非视距概率，是两种信道情况的概率加权叠加。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 4</div>
+<div class="fbody">
+<span class="ftag tag-sys">通信模型</span>
+<div class="fexpr">P_LoS = 1 / (1 + a·exp(−b(θᵢⱼ − a)))</div>
+<div class="fmean"><b>视距链路概率</b>：由UAV间仰角 θᵢⱼ 决定，仰角越大（飞越障碍物越高）LoS概率越趋近于1；参数 a、b 刻画环境障碍物的密度与遮挡陡峭程度。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 5a/5b</div>
+<div class="fbody">
+<span class="ftag tag-sys">通信模型</span>
+<div class="fexpr">L_LoS = G(t) + νLoS　　L_NLoS = G(t) + νNLoS</div>
+<div class="fmean"><b>视距/非视距路径损耗</b>：均等于自由空间路径损耗 G(t) 加上各自信道的额外衰减均值，NLoS 的附加损耗 νNLoS 通常远大于 νLoS。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 6</div>
+<div class="fbody">
+<span class="ftag tag-sys">通信模型</span>
+<div class="fexpr">γᵢʲ_A2A = (Pᵗˣ / Lᵢʲ_avg) / (ΣIᵢᶻ + σ²_A2A)</div>
+<div class="fmean">UAV j 到 UAV i 的<b>空空信噪比 SINR</b>：有效接收信号功率 除以 所有干扰源功率之和加噪声，决定了通信链路质量是否达标。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 7</div>
+<div class="fbody">
+<span class="ftag tag-sys">通信模型</span>
+<div class="fexpr">Rᵢʲ_A2A(t) = B · log₂(1 + γᵢʲ_A2A)</div>
+<div class="fmean">UAV j 到 UAV i 的<b>空空通信速率</b>（Shannon容量公式），由带宽 B 和 SINR 共同决定，约束 C2 要求此值不低于 Rmin。</div>
+</div>
+</div>
+
+<p class="sec-title">动力学与能耗模型</p>
+
+<div class="frow">
+<div class="fnum">式 8</div>
+<div class="fbody">
+<span class="ftag tag-sys">动力学</span>
+<div class="fexpr">ṗ = R(γ)·v</div>
+<div class="fmean">固定翼UAV的<b>位移运动学方程</b>：位置变化率等于速度向量经偏航旋转矩阵 R(γ) 变换后的结果，体现偏航转向对飞行方向的影响。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 9</div>
+<div class="fbody">
+<span class="ftag tag-sys">动力学</span>
+<div class="fexpr">m_f·v̇ + ½ρv² = F_air</div>
+<div class="fmean">固定翼UAV的<b>平移牛顿-欧拉方程</b>：推力 = 质量×加速度 + 空气阻力（阻力与速度平方成正比），描述速度如何随推力变化。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 10</div>
+<div class="fbody">
+<span class="ftag tag-sys">动力学</span>
+<div class="fexpr">I_yaw·γ̈ + I_yaw·γ̇² = R_torque</div>
+<div class="fmean">固定翼UAV的<b>偏航旋转方程</b>：方向舵产生的转矩 = 偏航转动惯量×角加速度 + 离心惯量项，描述转弯时偏航角的动态变化。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 11</div>
+<div class="fbody">
+<span class="ftag tag-sys">动力学</span>
+<div class="fexpr">ṗ = v</div>
+<div class="fmean">多旋翼UAV的<b>简化运动学方程</b>：位置变化率直接等于速度（忽略姿态耦合），大幅简化了控制器设计复杂度。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 12</div>
+<div class="fbody">
+<span class="ftag tag-sys">动力学</span>
+<div class="fexpr">m_u·v̇ + ½ρv² = F_air</div>
+<div class="fmean">多旋翼UAV的<b>平移牛顿方程</b>：与固定翼式9结构相同，但质量参数改为多旋翼质量 m_u，描述多旋翼在推力与阻力下的加速过程。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 13</div>
+<div class="fbody">
+<span class="ftag tag-sys">能耗模型</span>
+<div class="fexpr">P_dyn(v,a) ≈ P₀ + μv² + d·a·v³</div>
+<div class="fmean">多旋翼UAV的<b>飞行功率消耗</b>：由悬停克重功率 P₀、桨叶阻力项（与速度平方正比）和机身阻力项（与加速度和速度三次方乘积正比）三部分组成。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 14</div>
+<div class="fbody">
+<span class="ftag tag-sys">能耗模型</span>
+<div class="fexpr">Eᵢ(T) = ∫₀ᵀ (P_dyn(v,a) + P_com) dt</div>
+<div class="fmean">多旋翼UAV i 在整个任务周期内的<b>总能量消耗</b>：对飞行功率与固定通信功率之和关于时间积分，是优化目标分母中的能效惩罚项。</div>
+</div>
+</div>
+
+<p class="sec-title">问题建模与MDP定义</p>
+
+<div class="frow">
+<div class="fnum">式 15</div>
+<div class="fbody">
+<span class="ftag tag-mdp">问题建模</span>
+<div class="fexpr">P1: max {ΣNᵢ(T) / ΣEᵢ(T)}　s.t. C1~C5</div>
+<div class="fmean"><b>原始优化问题 P1</b>：以最大化所有UAV搜索目标总数与总能耗之比（即任务能效）为目标，同时满足电量安全、通信速率、飞行域、速度五项约束。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 16</div>
+<div class="fbody">
+<span class="ftag tag-mdp">问题建模</span>
+<div class="fexpr">P2: max {ΣNᵢ(Mc·δt) / ΣEᵢ(Mc·δt)}　s.t. C1~C5</div>
+<div class="fmean"><b>离散化问题 P2</b>：将连续时间优化问题 P1 按时隙 δt 离散为 Mc 步的有限时域序列决策问题，为将其转化为MDP做准备。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 17</div>
+<div class="fbody">
+<span class="ftag tag-mdp">MDP状态</span>
+<div class="fexpr">sⁱ_mul,m = {pᵢm, vᵢm, eᵢm, nᵢm}</div>
+<div class="fmean">多旋翼UAV i 在时隙 m 的<b>本体状态</b> = （当前位置，当前速度，剩余电量，网络连接状态），是Actor网络自身感知的核心输入。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 18</div>
+<div class="fbody">
+<span class="ftag tag-mdp">MDP状态</span>
+<div class="fexpr">oⁱ_mul,m = {sⁱ, {dᵢʲ, dᵢᵏ, pʲ, eʲ, nʲ}}</div>
+<div class="fmean">多旋翼UAV i 的<b>局部观测向量</b>：在自身状态基础上，附加对邻近UAV j 的距离/位置/电量/网络状态以及对目标 k 的距离，形成协作感知输入。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 19</div>
+<div class="fbody">
+<span class="ftag tag-mdp">MDP状态</span>
+<div class="fexpr">sⁱ_fix,m = {pᵢm, vᵢm, ψᵢm}</div>
+<div class="fmean">固定翼UAV i 在时隙 m 的<b>本体状态</b> = （位置，速度，航向角），与多旋翼相比去掉了电量和网络项（固定翼续航无需考虑能耗优化）。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 20</div>
+<div class="fbody">
+<span class="ftag tag-mdp">MDP状态</span>
+<div class="fexpr">oⁱ_fix,m = {sⁱ, {dᵢᵏ, pʲ, nʲ}}</div>
+<div class="fmean">固定翼UAV i 的<b>局部观测向量</b>：自身状态加上对地面目标的距离、其他UAV的位置和网络状态，侧重中继覆盖和目标粗定位，无需电量信息。</div>
+</div>
+</div>
+
+<p class="sec-title">奖励函数</p>
+
+<div class="frow">
+<div class="fnum">式 21</div>
+<div class="fbody">
+<span class="ftag tag-rwd">奖励</span>
+<div class="fexpr">rⁱ_com = {−rc 若R&lt;Rmin；rc/(d+Δd) 若Rmin≤R&lt;Rmax；rc 若R≥Rmax}</div>
+<div class="fmean"><b>通信奖励</b>：链路断开给负奖励惩罚；链路正常时奖励与距离负相关（越近越好）；链路充足时给满分奖励，驱使UAV维持有效组网。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 22</div>
+<div class="fbody">
+<span class="ftag tag-rwd">奖励</span>
+<div class="fexpr">rⁱ_power = {τ·eᵢm 若e&gt;esafe；0 若e≤esafe}</div>
+<div class="fmean"><b>能耗奖励</b>：当剩余电量高于安全阈值时给出与电量成正比的小奖励（系数 τ≤1 缩放比例），低于阈值时奖励归零，间接鼓励节能飞行。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 23</div>
+<div class="fbody">
+<span class="ftag tag-rwd">奖励</span>
+<div class="fexpr">rⁱ_safe = {−η/(dᵢʲ+Δd) 若d≤Dsafe；0 若d&gt;Dsafe}</div>
+<div class="fmean"><b>安全奖励（防碰撞惩罚）</b>：仅当两UAV距离小于安全阈值时触发负奖励，且距离越近惩罚越大（反比关系），驱使UAV保持安全间距。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 24</div>
+<div class="fbody">
+<span class="ftag tag-rwd">奖励</span>
+<div class="fexpr">rⁱ_task-m = {ζ/(dᵢᵏ+Δd) 若Dfound&lt;d≤Ddetect；ζ 若d&lt;Dfound}</div>
+<div class="fmean">多旋翼UAV的<b>目标搜索奖励</b>：在探测范围内距目标越近奖励越大；一旦进入确认距离 Dfound 内给满分奖励，驱使UAV主动接近并确认目标。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 25</div>
+<div class="fbody">
+<span class="ftag tag-rwd">奖励</span>
+<div class="fexpr">rⁱ_task-f = {ζ/(dᵢᵏ+Δd) 若d≤Ddetect-f；0 若d&gt;Ddetect-f}</div>
+<div class="fmean">固定翼UAV的<b>粗搜索奖励</b>：固定翼无需精确确认，仅在大范围探测距离内给出与距离负相关的奖励，引导其向目标密集区域巡航覆盖。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 26</div>
+<div class="fbody">
+<span class="ftag tag-rwd">奖励</span>
+<div class="fexpr">rⁱm_m = rcom + rpower + rsafe + rtask-m</div>
+<div class="fmean">多旋翼UAV i 在时隙 m 的<b>总奖励</b>：通信奖励 + 能耗奖励 + 安全奖励 + 搜索奖励四项线性叠加，综合驱动UAV同时优化四个子目标。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 27</div>
+<div class="fbody">
+<span class="ftag tag-rwd">奖励</span>
+<div class="fexpr">rⁱm_f = rsafe + rtask-f</div>
+<div class="fmean">固定翼UAV i 在时隙 m 的<b>总奖励</b>：只含安全奖励与粗搜索奖励两项（无需能耗奖励，也无精确确认奖励），与其中继+侦察角色对应。</div>
+</div>
+</div>
+
+<p class="sec-title">MARL策略梯度框架</p>
+
+<div class="frow">
+<div class="fnum">式 28</div>
+<div class="fbody">
+<span class="ftag tag-alg">算法核心</span>
+<div class="fexpr">Jⁱm(πᵢ) = E[γ · Rⁱm(S,A)]</div>
+<div class="fmean">UAV i 的<b>期望累积折扣奖励目标函数</b>：策略 πᵢ 在状态-动作空间上产生的长期回报期望值，是整个Actor网络训练所要最大化的量。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 29</div>
+<div class="fbody">
+<span class="ftag tag-alg">算法核心</span>
+<div class="fexpr">∇J = E[∇log π(aᵢ|oᵢ) · yᵢm]</div>
+<div class="fmean">引入<b>熵正则化后的策略梯度</b>：沿"动作对数概率的梯度乘以优势估计 yᵢm"方向更新Actor参数，熵项鼓励策略保持探索性而不过早收敛。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 30</div>
+<div class="fbody">
+<span class="ftag tag-alg">算法核心</span>
+<div class="fexpr">yᵢm = Qω(S,A) − α·log π(aᵢ|oᵢ)</div>
+<div class="fmean"><b>软优势值 yᵢm</b>（SAC核心）：Q值减去熵正则项，α 控制熵的权重——α 越大越鼓励探索，使策略在高Q值与高熵（行为多样性）之间取得平衡。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 31</div>
+<div class="fbody">
+<span class="ftag tag-alg">算法核心</span>
+<div class="fexpr">L_Q(φᵢ) = Σ (Qω(S,A) − yᵢm)²</div>
+<div class="fmean">Critic网络的<b>损失函数（TD误差）</b>：所有UAV的Q值预测与软目标值 yᵢm 之差的平方和，最小化该值使Critic对当前策略的价值估计更准确。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 32</div>
+<div class="fbody">
+<span class="ftag tag-alg">算法核心</span>
+<div class="fexpr">yᵢm = rᵢm + γQ̄ω(S,A) − α·log π̄(aᵢ₊₁|oᵢ₊₁)</div>
+<div class="fmean"><b>训练目标值 yᵢm 的计算式</b>：当前奖励 + 折扣因子 × 目标Critic网络对下一状态的Q估计 − 熵惩罚，使用目标网络（带上划线）提升训练稳定性。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 33/34</div>
+<div class="fbody">
+<span class="ftag tag-alg">算法核心</span>
+<div class="fexpr">φ̄ᵢ = ε·φᵢ + (1−ε)·φ̄ᵢ　　ω̄ᵢ = ε·ωᵢ + (1−ε)·ω̄ᵢ</div>
+<div class="fmean">Actor和Critic的<b>软更新（Polyak平均）</b>：目标网络参数以系数 ε 缓慢追踪在线网络，避免目标值剧烈波动，是DRL训练稳定性的关键机制。</div>
+</div>
+</div>
+
+<p class="sec-title">图注意力编码器</p>
+
+<div class="frow">
+<div class="fnum">式 35</div>
+<div class="fbody">
+<span class="ftag tag-gat">GAT编码器</span>
+<div class="fexpr">hᵢm = f_encoder(aᵢm, oᵢm)</div>
+<div class="fmean">UAV i 的<b>节点特征向量</b>：通过MLP编码器将动作与观测联合映射为低维潜在表示 hᵢm，作为图注意力机制的输入节点特征。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 36</div>
+<div class="fbody">
+<span class="ftag tag-gat">GAT编码器</span>
+<div class="fexpr">Aᵢⱼ = 1 若Rᵢʲ_A2A &gt; Rmin，否则 = 0</div>
+<div class="fmean">合作图的<b>邻接矩阵更新规则</b>：通信速率超过阈值则置1（存在有效链路），低于阈值则置0（链路断开），实现邻接矩阵随通信状态的实时动态更新。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 37</div>
+<div class="fbody">
+<span class="ftag tag-gat">GAT编码器</span>
+<div class="fexpr">eᵢʲm = σ_L(aᵀ · W[hᵢm ∥ hʲm])</div>
+<div class="fmean">UAV i 与邻居 j 之间的<b>相似度系数</b>：将两节点特征拼接后经线性变换W和LeakyReLU激活，得到衡量 j 对 i 的原始重要性分数。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 38</div>
+<div class="fbody">
+<span class="ftag tag-gat">GAT编码器</span>
+<div class="fexpr">αᵢʲm = exp(eᵢʲ) / Σₖ exp(eᵢᵏ)</div>
+<div class="fmean"><b>归一化注意力权重</b>（Softmax）：对UAV i 所有邻居的相似度做归一化，得到各邻居对 i 的贡献比例，确保所有邻居权重之和为1。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 39</div>
+<div class="fbody">
+<span class="ftag tag-gat">GAT编码器</span>
+<div class="fexpr">h̃ᵢm = σ_R(Σⱼ αᵢʲm · W · hʲm)</div>
+<div class="fmean"><b>邻居信息聚合结果</b>：对所有连通邻居的特征向量按注意力权重加权求和后经ReLU激活，得到节点 i 融合了邻域协作信息后的增强表示。</div>
+</div>
+</div>
+
+<p class="sec-title">状态观测优化</p>
+
+<div class="frow">
+<div class="fnum">式 40</div>
+<div class="fbody">
+<span class="ftag tag-obs">观测优化</span>
+<div class="fexpr">ηᵢʲm = w_d·(dᵢʲ/Dmax) + w_e·(eʲ/Emax) + w_n·(nʲ/Nmax)</div>
+<div class="fmean">UAV j 对 UAV i 的<b>合作重要性指数</b>：综合距离（近者重要）、剩余电量（电多者重要）、已探测目标数（发现多者重要）三项加权，用于对邻居UAV信息排序筛选。</div>
+</div>
+</div>
+
+<div class="frow">
+<div class="fnum">式 41</div>
+<div class="fbody">
+<span class="ftag tag-obs">观测优化</span>
+<div class="fexpr">βᵢᵏm = w_td·(dᵢᵏ/Dmax) + w_t·(tᵏm/Tmax)</div>
+<div class="fmean">目标 k 对 UAV i 的<b>搜索重要性指数</b>：综合目标距离（近者优先）与目标等待时间（久未被确认者优先）两项加权，用于对搜索目标列表排序和掩码处理。</div>
+</div>
+</div>
