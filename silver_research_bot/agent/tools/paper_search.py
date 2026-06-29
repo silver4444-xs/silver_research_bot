@@ -10,9 +10,9 @@ from urllib.parse import quote
 
 import httpx
 
-from silver_research_bot.agent.tools.base import Tool
+from silver_research_bot.agent.tools.base import Tool, tool_parameters
 from silver_research_bot.agent.tools.schema import (
-    IntegerSchema, StringSchema, tool_parameters, tool_parameters_schema,
+    IntegerSchema, StringSchema, tool_parameters_schema,
 )
 
 _ARXIV_NS = {"atom": "http://www.w3.org/2005/Atom"}

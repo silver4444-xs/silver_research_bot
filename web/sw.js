@@ -1,6 +1,6 @@
 // Service Worker — 缓存前端资源和 API 响应
-const CACHE = "silver-research-v1";
-const API_CACHE = "silver-research-api-v1";
+const CACHE = "silver-research-v2";
+const API_CACHE = "silver-research-api-v2";
 
 self.addEventListener("install", (e) => {
   e.waitUntil(

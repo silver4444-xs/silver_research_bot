@@ -61,10 +61,39 @@ class CrossPaperComparison:
 
     paper_ids: list[str] = field(default_factory=list)
     dimensions: dict = field(default_factory=dict)
-    similarities: list[str] = field(default_factory=list)
-    differences: list[str] = field(default_factory=list)
     synthesis: str = ""
     comparison_html: str = ""
+    skipped_ids: list[str] = field(default_factory=list)
+    # v2 structured fields
+    structured: "StructuredComparison | None" = None
+    chart_data: dict = field(default_factory=dict)
+    metrics: list[dict] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ComparisonDimension:
+    """单个对比维度"""
+
+    name: str = ""
+    paper_data: dict[str, str] = field(default_factory=dict)
+    extracted_scores: dict[str, float] = field(default_factory=dict)
+    extracted_items: dict[str, list] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class StructuredComparison:
+    """结构化对比结果 (v2)"""
+
+    paper_ids: list[str] = field(default_factory=list)
+    dimensions: dict[str, ComparisonDimension] = field(default_factory=dict)
+    metrics: list[dict] = field(default_factory=list)
+    scores: dict[str, dict[str, float]] = field(default_factory=dict)
+    formula_overlap: dict[str, float] = field(default_factory=dict)
+    citation_overlap: dict[str, int] = field(default_factory=dict)
+    similarity_matrix: list[list[float]] = field(default_factory=list)
+    chart_data: dict = field(default_factory=dict)
+    synthesis_md: str = ""
+    created_at: str = ""
 
 
 @dataclass(slots=True)

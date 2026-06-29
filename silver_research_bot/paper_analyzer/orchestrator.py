@@ -89,7 +89,7 @@ class PaperOrchestrator:
 
             self._write_progress(paper_dir, "translate", "running", "正在翻译全文（公式→LaTeX）…")
             _mark(plan, "translate", "running")
-            translation = await translate_paper(full_text, self.provider, self.model, figures=figures)
+            translation = await translate_paper(full_text, self.provider, self.model, figures=figures, tables=tables, paper_id=meta_dict["paper_id"])
             (paper_dir / "translation.md").write_text(translation, encoding="utf-8")
             analysis.translation = translation
             artifacts.append({
@@ -129,7 +129,16 @@ class PaperOrchestrator:
 
         self._write_progress(paper_dir, "formula_explain", "running", "正在逐条解释公式…")
         _mark(plan, "formula_explain", "running")
-        formulas_text = await explain_formulas(formulas, full_text, self.provider, self.model)
+        # English papers: extract complete $$...$$ formulas from translation
+        if lang == "en" and analysis.translation:
+            formulas_text = await explain_formulas(
+                formulas, full_text, self.provider, self.model,
+                translation_text=analysis.translation,
+            )
+        else:
+            formulas_text = await explain_formulas(
+                formulas, full_text, self.provider, self.model,
+            )
         (paper_dir / "formula_explanations.md").write_text(formulas_text, encoding="utf-8")
         artifacts.append({
             "name": "formula_explanations.md",

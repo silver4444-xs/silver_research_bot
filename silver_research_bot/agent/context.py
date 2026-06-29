@@ -24,7 +24,7 @@ class ContextBuilder:
     _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
     '''运行时上下文块的起始标记，用于区分临时元数据和用户真实输入'''
     _MAX_RECENT_HISTORY = 50
-    '''从 MemoryStore 中读取“最近历史”时最多取多少条记录'''
+    '''从 MemoryStore 中读取"最近历史"时最多取多少条记录'''
     _RUNTIME_CONTEXT_END = "[/Runtime Context]"
     '''运行时上下文块的结束标记'''
 
@@ -50,12 +50,12 @@ class ContextBuilder:
         if active_memory_text:
             memory_blocks.append(active_memory_text)
         if project_memory_text:
-            memory_blocks.append(f”## Project Memory\n\n{project_memory_text}”)
+            memory_blocks.append(f"## Project Memory\n\n{project_memory_text}")
         long_term = self.memory.get_memory_context()
-        if long_term and not self._is_template_content(self.memory.read_memory(), “memory/MEMORY.md”):
-            memory_blocks.append(f”## Long-term Memory\n\n{long_term}”)
+        if long_term and not self._is_template_content(self.memory.read_memory(), "memory/MEMORY.md"):
+            memory_blocks.append(f"## Long-term Memory\n\n{long_term}")
         if memory_blocks:
-            parts.append(“# Memory\n\n” + “\n\n”.join(memory_blocks))
+            parts.append("# Memory\n\n" + "\n\n".join(memory_blocks))
 
         always_skills = self.skills.get_always_skills()
         if always_skills:

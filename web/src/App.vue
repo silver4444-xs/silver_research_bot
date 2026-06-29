@@ -102,7 +102,31 @@
     </div>
 
     <!-- Compare -->
-    <div v-if="ps==='compare'" class="card" style="margin-top:var(--s-5)"><div class="ch"><h3>横向对比</h3></div><label for="cs">选择论文（Ctrl/Cmd 多选）</label><select id="cs" v-model="cmpIds" multiple class="cmp-sel"><option v-for="p in papers" :key="p.paper_id" :value="p.paper_id">{{ p.title?.slice(0,80) }}</option></select><button class="btn ba" :disabled="cmpIds.length<2" @click="doCompare" style="margin-top:var(--s-3)">开始对比（已选{{cmpIds.length}}篇）</button><div v-if="cmpResult" class="md" style="margin-top:var(--s-4)" v-html="renderMd(cmpResult.synthesis||'对比完成')"></div></div>
+    <div v-if="ps==='compare'" class="cmp-area"><div class="card"><div class="ch"><h3>横向对比工作台 <span style="font-size:12px;color:var(--c-text-muted);font-weight:400">— 已选 {{cmpIds.length}} 篇</span></h3></div>
+    <div class="cmp-pick-grid"><div v-for="p in cmpReadyPapers" :key="p.paper_id" :class="['cmp-pick-card',{sel:cmpIds.includes(p.paper_id)}]" :style="cmpIds.includes(p.paper_id)?'--clr:'+PAPER_COLORS[cmpIds.indexOf(p.paper_id)%12]:''" @click="toggleCmpPaper(p.paper_id)"><div class="cmp-pick-chk">{{ cmpIds.includes(p.paper_id) ? '✓' : '' }}</div><div class="cmp-pick-info"><div class="cmp-pick-title">{{ p.title?.slice(0,70) || p.paper_id }}</div><div class="cmp-pick-meta">{{ p.page_count||'?' }} 页 · {{ p.formula_count||'?' }} 公式 · {{ p.status==='completed'?'已完成':'分析中' }}</div></div></div></div>
+    <p v-if="!cmpReadyPapers.length" class="empty">暂无已完成分析的论文，请先上传并分析论文。</p>
+    <div class="row" style="gap:8px;margin-top:var(--s-3)"><button class="btn ba" :disabled="cmpIds.length<2" @click="doCompare">{{ comparing?'对比中…':'开始对比（已选'+cmpIds.length+'篇）' }}</button><button v-if="cmpIds.length" class="btn bg bsm" @click="cmpIds=[]">清空选择</button><button class="btn bs bsm" @click="loadCompareHistory" style="margin-left:auto">历史对比</button></div><p v-if="cmpError" class="empty" style="color:var(--c-danger)">{{ cmpError }}</p></div>
+    <!-- History list -->
+    <div class="card" v-if="showCmpHistory"><div class="ch"><h3>历史对比列表 <button class="btn bg bsm" @click="showCmpHistory=false" style="float:right">×</button></h3></div><div v-if="!cmpHistory.length" class="empty">暂无历史对比记录。</div><article v-for="h in cmpHistory" :key="h.id" class="ri cmp-hist-row"><div><strong>{{ h.created_at?.slice(0,19) }}</strong><p>{{ h.paper_count }} 篇论文</p></div><div style="text-align:right"><button class="btn bp bsm" @click="loadCompareResult(h.id)">查看</button><button class="btn bg bsm" style="color:var(--c-danger);margin-left:4px" @click="deleteCompareResult(h.id)">删除</button></div></article></div>
+    <!-- Comparison result -->
+    <template v-if="cmpResult">
+    <!-- Dashboard cards -->
+    <div class="cmp-dash"><div class="cmp-pcard" v-for="(p,i) in cmpPapers" :key="p.paper_id" :style="'--clr:'+PAPER_COLORS[i]"><div class="cmp-pclr"></div><div class="cmp-ptitle">{{ p.title?.slice(0,60) || p.paper_id }}</div><div class="cmp-pmeta">页数: {{ p.page_count||'?' }} | 公式: {{ p.formula_count||'?' }}</div><div class="cmp-pscore" v-if="cmpStructured?.scores?.[p.paper_id]">综合: {{ cmpAvgScore(p.paper_id)?.toFixed(1) ?? '—' }}/10</div></div></div>
+    <!-- Tab bar -->
+    <div class="card"><div class="ctabs"><button v-for="t in cmpTabs" :key="t.id" :class="['ctab',{on:cmpTab===t.id}]" @click="switchCmpTab(t.id)">{{ t.label }}</button></div>
+    <!-- Overview -->
+    <div v-if="cmpTab==='overview'" class="cmp-overview"><div class="cmp-ov-row" v-if="cmpStructured?.similarity_matrix?.length"><strong>论文相似度矩阵</strong><div class="cmp-mini-heat" v-html="cmpMiniHeatmap()"></div></div><div class="cmp-ov-row" v-if="cmpStructured?.formula_overlap && Object.keys(cmpStructured.formula_overlap).length"><strong>公式重叠度</strong><table class="cmp-tbl"><tr><th>论文对</th><th>Jaccard 相似度</th></tr><tr v-for="(v,k) in cmpStructured.formula_overlap" :key="k"><td>{{ cmpFormatPair(k) }}</td><td>{{ (v*100).toFixed(1) }}%</td></tr></table></div></div>
+    <!-- Dimensions matrix -->
+    <div v-if="cmpTab==='dimensions'" class="cmp-matrix"><div class="cmp-dim-filter"><label>维度筛选: </label><select v-model="cmpDimFilter"><option value="all">全部维度</option><option v-for="d in cmpDimNames" :key="d" :value="d">{{ d }}</option></select></div><table class="cmp-tbl cmp-mtbl"><thead><tr><th>维度</th><th v-for="(p,i) in cmpPapers" :key="p.paper_id" :style="'color:'+PAPER_COLORS[i]">{{ p.title?.slice(0,20) }}</th></tr></thead><tbody><tr v-for="d in filteredCmpDims" :key="d"><td><strong>{{ d }}</strong></td><td v-for="(p,i) in cmpPapers" :key="p.paper_id"><div class="cmp-score-badge" :style="'--clr:'+PAPER_COLORS[i]">{{ (cmpStructured?.scores?.[p.paper_id]?.[d]||'-') }}</div></td></tr></tbody></table></div>
+    <!-- Charts -->
+    <div v-if="cmpTab==='charts'" class="cmp-charts"><div class="cmp-chart-box" id="cmp-radar-container"><strong>维度评分雷达图</strong><div class="cmp-cv" ref="cmpRadarCv"></div></div><div class="cmp-chart-box" id="cmp-heatmap-container"><strong>相似度热力图</strong><div class="cmp-cv" ref="cmpHeatCv"></div></div><div class="cmp-chart-box" id="cmp-bars-container"><strong>维度评分柱状图</strong><div class="cmp-cv" ref="cmpBarsCv"></div></div><div class="cmp-chart-box" id="cmp-stack-container"><strong>评分堆叠图</strong><div class="cmp-cv" ref="cmpStackCv"></div></div></div>
+    <!-- Metrics -->
+    <div v-if="cmpTab==='metrics'"><table class="cmp-tbl" v-if="cmpResult.metrics?.length"><thead><tr><th>指标</th><th v-for="(p,i) in cmpPapers" :key="p.paper_id">{{ p.title?.slice(0,20) }}</th><th>偏好</th></tr></thead><tbody><tr v-for="m in cmpResult.metrics" :key="m.metric_name"><td><strong>{{ m.metric_name }}</strong><div style="font-size:11px;color:var(--c-text-secondary)">{{ m.dataset }}</div></td><td v-for="(p,i) in cmpPapers" :key="p.paper_id" :style="'color:'+PAPER_COLORS[i]">{{ m.paper_values?.[p.paper_id] ?? '-' }}{{ m.unit||'' }}</td><td>{{ m.higher_is_better?'↑ 越高越好':'↓ 越低越好' }}</td></tr></tbody></table><p v-else class="empty">暂无非结构化指标数据。指标数据依赖 LLM 从实验设计中自动提取。</p></div>
+    <!-- Synthesis -->
+    <div v-if="cmpTab==='synthesis'" class="md" v-html="renderMd(cmpResult.synthesis||'综合分析生成中…')"></div>
+    </div>
+    <!-- Bottom bar -->
+    <div class="card" v-if="cmpResult" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn bs bsm" @click="exportCompareMD">导出 Markdown</button><button class="btn bs bsm" @click="exportCompareCSV">导出 CSV</button><button class="btn bs bsm" @click="exportCompareHTML">导出 HTML</button><span style="font-size:12px;color:var(--c-text-secondary);margin-left:auto">对比 ID: {{ cmpResult.structured?.created_at || '-' }}</span></div></template></div>
   </section>
 
   <!-- ═══ Original ═══ -->
@@ -132,7 +156,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
 const icons={
   chat:'<path d="M20 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4l4 4 4-4h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/>',
@@ -147,7 +171,14 @@ const dims=[{id:'system_model',label:'系统模型分析'},{id:'problem_formulat
 const tab=ref('papers');const ps=ref('upload');const dt=ref('translation');const upMode=ref('file')
 const upFile=ref(null);const upText=ref('');const upLang=ref('auto');const uploading=ref(false);const drag=ref(false);const upStatus=ref('');const progressMsg=ref('');const curPaperId=ref('');const pStages=ref([]);let _pollTimer=null
 const STAGES=[{id:'parse',label:'文档解析'},{id:'translate',label:'全文翻译'},{id:'analyze',label:'四维分析'},{id:'formula_explain',label:'公式解读'},{id:'visualize',label:'可视化'},{id:'citation',label:'引用图谱'},{id:'review',label:'多视角审稿'},{id:'audit',label:'质量审计'}]
-const papers=ref([]);const pdet=ref(null);const cmpIds=ref([]);const cmpResult=ref(null)
+const papers=ref([]);const pdet=ref(null);const cmpIds=ref([]);const cmpResult=ref(null);const comparing=ref(false);const cmpError=ref('')
+const cmpTab=ref('overview');const cmpTabs=[{id:'overview',label:'对比仪表板'},{id:'dimensions',label:'多维对比'},{id:'charts',label:'可视化图表'},{id:'metrics',label:'定量分析'},{id:'synthesis',label:'综合分析'}]
+const cmpReadyPapers=computed(()=>papers.value.filter(p=>p.status==='completed'))
+function toggleCmpPaper(pid){const i=cmpIds.value.indexOf(pid);if(i>=0)cmpIds.value.splice(i,1);else cmpIds.value.push(pid)}
+const cmpHistory=ref([]);const showCmpHistory=ref(false);const cmpStructured=ref(null);const cmpDimFilter=ref('all')
+const cmpDimNames=ref([]);const cmpPapers=ref([])
+const cmpRadarCv=ref(null);const cmpHeatCv=ref(null);const cmpBarsCv=ref(null);const cmpStackCv=ref(null)
+const PAPER_COLORS=['#a78bfa','#60a5fa','#34d399','#fbbf24','#f472b6','#fb923c','#94a3b8','#f87171','#4ade80','#c084fc','#38bdf8','#a3e635']
 const apiOk=ref(true);const apiStatus=ref('未知');const ragPapers=ref([])
 const chatMsgs=ref([{role:'agent',content:'你好！上传 PDF 或粘贴论文文本即可自动完成翻译、四维分析、公式解读。'}])
 const chatIn=ref('');const chatReply=ref(null);const chatAttach=ref(null)
@@ -192,7 +223,7 @@ async function pollProgress(){
     }
   }catch(e){progressMsg.value='轮询失败: '+e.message;console.error('pollProgress',e)}}
 function retypeset(){if(window.MathJax)MathJax.typesetPromise();if(window.mermaid)try{mermaid.run({querySelector:'.mermaid'})}catch(e){}}function renderAll(t){let h=renderMd(t);setTimeout(retypeset,100);return h}
-function renderFormula(t){if(!t)return'';if(t.indexOf('<div class="frow"')>-1||t.indexOf('<style>')>-1){setTimeout(retypeset,100);return t}return renderAll(t)}
+function renderFormula(t){if(!t)return'';if(t.indexOf('<div class="frow"')>-1||t.indexOf('<style>')>-1){t=t.replace(/(<div class="fexpr">)([\s\S]*?)(<\/div>)/g,function(_,o,c,e){if(/^\s*\$/.test(c))return o+c+e;c=c.replace(/^\s+|\s+$/g,'');return o+'$$'+c+'$$'+e});setTimeout(retypeset,100);return t}return renderAll(t)}
 function clearPoll(){if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null}}
 async function openPaper(pid){clearPoll()
   try{pdet.value=await api(`/api/paper/${pid}`);dt.value=pdet.value.translation?'translation':'system_model';ps.value='detail'
@@ -204,7 +235,70 @@ async function pollDetailProgress(){if(!curPaperId.value)return
     if(p.stage==='audit'&&p.status==='completed'){clearPoll();pdet.value=await api(`/api/paper/${curPaperId.value}`);setTimeout(retypeset,300)}}catch(e){/*ignore*/}}
 async function doExport(){if(!pdet.value||!pdet.value.paper_id)return;const a=document.createElement('a');a.href=`/api/paper/${pdet.value.paper_id}/export`;a.download=`${pdet.value.paper_id}_analysis.zip`;a.click()}
 async function delPaper(pid){if(!confirm('确认删除？'))return;try{await fetch(`/api/paper/${pid}`,{method:'DELETE'});await loadPapers();pdet.value=null}catch(e){console.error(e)}}
-async function doCompare(){try{cmpResult.value=await api('/api/paper/compare',{method:'POST',body:JSON.stringify({paper_ids:cmpIds.value})})}catch(e){console.error(e)}}
+async function doCompare(){comparing.value=true;cmpError.value='';cmpResult.value=null;cmpStructured.value=null
+  try{const r=await api('/api/paper/compare',{method:'POST',body:JSON.stringify({paper_ids:cmpIds.value,structured:true})})
+    cmpResult.value=r;cmpStructured.value=r.structured||null
+    cmpDimNames.value=r.structured?.scores?Object.keys(r.structured.scores[Object.keys(r.structured.scores)[0]]||{}):Object.keys(r.dimensions||{})
+    cmpPapers.value=cmpIds.value.map(id=>papers.value.find(p=>p.paper_id===id)||{paper_id:id,title:id})
+    await nextTick();if(cmpTab.value==='charts')renderAllCmpCharts()
+  }catch(e){cmpError.value='对比失败: '+(e.message||'网络错误')}finally{comparing.value=false}}
+function cmpAvgScore(pid){const sc=cmpStructured.value?.scores?.[pid];if(!sc)return null;const v=Object.values(sc).filter(x=>typeof x==='number');return v.length?v.reduce((a,b)=>a+b,0)/v.length:null}
+function cmpPaperTitle(pid){const p=cmpPapers.value.find(x=>x.paper_id===pid);return p?(p.title?.slice(0,30)||pid):pid}
+function cmpFormatPair(key){const parts=key.split('|');return parts.map(p=>cmpPaperTitle(p)).join(' ↔ ')}
+function switchCmpTab(tid){cmpTab.value=tid;if(tid==='charts')nextTick().then(renderAllCmpCharts)}
+const filteredCmpDims=computed(()=>cmpDimFilter.value==='all'?cmpDimNames.value:[cmpDimFilter.value])
+function cmpMiniHeatmap(){const m=cmpStructured.value?.similarity_matrix;if(!m||!m.length)return'';const n=m.length;const sz=Math.max(28,Math.min(48,Math.floor(280/n)));let h=`<div style="display:grid;grid-template-columns:repeat(${n},${sz}px);gap:2px">`;for(let i=0;i<n;i++)for(let j=0;j<n;j++){const v=m[i]?.[j]||0;const a=Math.round(v*255);h+=`<div style="width:${sz}px;height:${sz}px;background:rgb(${a},${Math.round(a*0.4)},${Math.round(255-a*0.6)});font-size:9px;display:flex;align-items:center;justify-content:center;border-radius:2px;color:${v>0.55?'#000':'#fff'}" title="相似度:${v}">${v.toFixed(2)}</div>`}h+='</div>';return h}
+
+// D3 chart rendering
+function renderAllCmpCharts(){renderCmpRadar();renderCmpHeat();renderCmpBars();renderCmpStack()}
+function renderCmpRadar(){const el=cmpRadarCv.value;if(!el||!window.d3)return;el.innerHTML='';const cd=cmpStructured.value?.chart_data?.radar;if(!cd||!cd.labels?.length)return
+  const W=el.clientWidth||400,H=el.clientHeight||350,R=Math.min(W,H)/2-40,cx=W/2,cy=H/2,n=cd.labels.length
+  const svg=d3.select(el).append('svg').attr('viewBox',`0 0 ${W} ${H}`)
+  const g=svg.append('g').attr('transform',`translate(${cx},${cy})`)
+  const angScale=(2*Math.PI)/n
+  // Grid circles
+  for(let l=1;l<=5;l++){const r=(R/5)*l;g.append('circle').attr('r',r).attr('fill','none').attr('stroke','#333').attr('stroke-width',0.5)}
+  // Axis lines
+  for(let i=0;i<n;i++){const a=angScale*i-Math.PI/2;g.append('line').attr('x1',0).attr('y1',0).attr('x2',R*Math.cos(a)).attr('y2',R*Math.sin(a)).attr('stroke','#444').attr('stroke-width',0.5)
+    g.append('text').attr('x',(R+14)*Math.cos(a)).attr('y',(R+14)*Math.sin(a)).attr('text-anchor','middle').attr('dominant-baseline','middle').attr('fill','#999').attr('font-size',11).text(cd.labels[i].slice(0,6))}
+  // Dataset polygons
+  cd.datasets.forEach((ds,j)=>{const pts=ds.data.map((v,i)=>{const a=angScale*i-Math.PI/2;const r=(v/10)*R;return [r*Math.cos(a),r*Math.sin(a)]})
+    const line=d3.line().x(d=>d[0]).y(d=>d[1]);g.append('path').attr('d',line(pts)+'Z').attr('fill',PAPER_COLORS[j]).attr('fill-opacity',0.15).attr('stroke',PAPER_COLORS[j]).attr('stroke-width',1.5)
+    pts.forEach(([x,y],i)=>{g.append('circle').attr('cx',x).attr('cy',y).attr('r',4).attr('fill',PAPER_COLORS[j]).attr('stroke','#0f0f1a').attr('stroke-width',1)})})}
+function renderCmpHeat(){const el=cmpHeatCv.value;if(!el||!window.d3)return;el.innerHTML='';const cd=cmpStructured.value?.chart_data?.heatmap;if(!cd||!cd.labels?.length)return
+  const W=el.clientWidth||400,n=cd.labels.length,cs=Math.min(60,Math.floor((W-80)/n)),H=n*cs+60
+  const svg=d3.select(el).append('svg').attr('viewBox',`0 0 ${W} ${H}`)
+  const m=cd.matrix;if(!m)return
+  for(let i=0;i<n;i++){svg.append('text').attr('x',80).attr('y',40+i*cs+cs/2).attr('fill','#999').attr('font-size',10).text(cd.labels[i].slice(0,10))
+    for(let j=0;j<n;j++){const v=m[i]?.[j]||0;const a=Math.round(v*255)
+      svg.append('rect').attr('x',90+j*cs).attr('y',28+i*cs).attr('width',cs-2).attr('height',cs-2).attr('fill',`rgb(${a},${Math.round(a*0.4)},${Math.round(255-a*0.6)})`).attr('rx',3)
+      svg.append('text').attr('x',90+j*cs+cs/2).attr('y',28+i*cs+cs/2).attr('text-anchor','middle').attr('dominant-baseline','middle').attr('fill',v>0.5?'#000':'#fff').attr('font-size',9).text(v.toFixed(2))}}
+  for(let j=0;j<n;j++){svg.append('text').attr('x',90+j*cs+cs/2).attr('y',22).attr('text-anchor','middle').attr('fill','#999').attr('font-size',10).text(cd.labels[j].slice(0,10))}}
+function renderCmpBars(){const el=cmpBarsCv.value;if(!el||!window.d3)return;el.innerHTML='';const cd=cmpStructured.value?.chart_data?.bars;if(!cd||!cd.labels?.length)return
+  const W=el.clientWidth||500,H=320,n=cd.labels.length,m=cd.datasets?.length||0,barW=Math.max(8,Math.floor((W-80)/n/(m+1)))
+  const svg=d3.select(el).append('svg').attr('viewBox',`0 0 ${W} ${H}`)
+  const maxY=10;const y=d3.scaleLinear().domain([0,maxY]).range([H-40,20])
+  svg.append('g').attr('transform','translate(60,0)').call(d3.axisLeft(y).ticks(5))
+  cd.datasets.forEach((ds,j)=>{cd.labels.forEach((l,i)=>{const v=ds.data[i]||0;const bx=70+i*(m+1)*barW+j*barW
+    svg.append('rect').attr('x',bx).attr('y',y(v)).attr('width',barW-2).attr('height',H-40-y(v)).attr('fill',PAPER_COLORS[j]).attr('rx',2)
+    svg.append('text').attr('x',bx+barW/2).attr('y',y(v)-4).attr('text-anchor','middle').attr('fill','#ccc').attr('font-size',9).text(v.toFixed(1))})})}
+function renderCmpStack(){const el=cmpStackCv.value;if(!el||!window.d3)return;el.innerHTML='';const cd=cmpStructured.value?.chart_data?.stacked;if(!cd||!cd.labels?.length)return
+  const W=el.clientWidth||500,H=320,n=cd.labels?.length||0,barW=Math.max(20,Math.floor((W-80)/n))
+  const svg=d3.select(el).append('svg').attr('viewBox',`0 0 ${W} ${H}`)
+  const dims=cd.dimensions||[];const data=cd.data||[]
+  const maxTotal=d3.max(data.map(row=>row.reduce((a,b)=>a+b,0)))||10
+  const y=d3.scaleLinear().domain([0,maxTotal]).range([H-40,20])
+  svg.append('g').attr('transform','translate(60,0)').call(d3.axisLeft(y).ticks(5))
+  for(let i=0;i<n;i++){let acc=0;for(let j=0;j<dims.length;j++){const v=data[i]?.[j]||0
+    svg.append('rect').attr('x',70+i*barW).attr('y',y(acc+v)).attr('width',barW-3).attr('height',y(acc)-y(acc+v)).attr('fill',PAPER_COLORS[j]).attr('rx',1);acc+=v}}}
+// Export functions
+function exportCompareMD(){const s=cmpResult.value?.synthesis||'';const t=cmpResult.value?.structured;let md='# 论文横向对比报告\n\n';if(t?.scores){md+='## 评分矩阵\n\n';for(const[pid,sc] of Object.entries(t.scores)){md+=`- ${pid}: `+Object.entries(sc).map(([k,v])=>`${k}=${v}`).join(', ')+'\n'}}md+='\n## 综合分析\n\n'+s;downloadBlob(md,'comparison_report.md','text/markdown')}
+function exportCompareCSV(){const t=cmpStructured.value;if(!t||!t.scores){alert('无结构化数据可导出');return}const dims=cmpDimNames.value;let csv='paper_id,'+dims.join(',')+'\n';for(const[pid,sc] of Object.entries(t.scores)){csv+=pid+','+dims.map(d=>sc[d]||'').join(',')+'\n'}downloadBlob(csv,'comparison_scores.csv','text/csv')}
+function exportCompareHTML(){const s=cmpResult.value?.synthesis||'';const t=cmpResult.value?.structured;let h='<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>对比报告</title><style>body{font-family:sans-serif;max-width:960px;margin:0 auto;padding:20px;background:#0f0f1a;color:#e0e0e0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #333;padding:8px}th{background:#1a1a2e}h1,h2{color:#a78bfa}</style></head><body><h1>论文横向对比报告</h1>';if(t?.scores){h+='<h2>评分矩阵</h2><table><tr><th>论文</th>'+cmpDimNames.value.map(d=>`<th>${d}</th>`).join('')+'</tr>';for(const[pid,sc] of Object.entries(t.scores)){h+=`<tr><td>${pid}</td>`+cmpDimNames.value.map(d=>`<td>${sc[d]||'-'}</td>`).join('')+'</tr>'}h+='</table>'}h+='<h2>综合分析</h2><pre style="white-space:pre-wrap">'+s+'</pre></body></html>';downloadBlob(h,'comparison_report.html','text/html')}
+function downloadBlob(content,filename,mime){const b=new Blob(['﻿'+content],{type:mime+';charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=filename;a.click();URL.revokeObjectURL(a.href)}
+async function loadCompareHistory(){showCmpHistory.value=!showCmpHistory.value;if(showCmpHistory.value)try{cmpHistory.value=(await api('/api/paper/compare/history')).comparisons||[]}catch(e){console.error(e)}}
+async function loadCompareResult(cid){showCmpHistory.value=false;try{cmpResult.value=await api(`/api/paper/compare/${cid}`);cmpStructured.value=cmpResult.value.structured||null;cmpDimNames.value=cmpResult.value.structured?.scores?Object.keys(cmpResult.value.structured.scores[Object.keys(cmpResult.value.structured.scores)[0]]||{}):[];cmpPapers.value=(cmpResult.value.paper_ids||[]).map(id=>papers.value.find(p=>p.paper_id===id)||{paper_id:id,title:id});cmpTab.value='overview'}catch(e){console.error(e)}}
+async function deleteCompareResult(cid){if(!confirm('确认删除此对比记录？'))return;try{await fetch(`/api/paper/compare/${cid}`,{method:'DELETE'});loadCompareHistory()}catch(e){console.error(e)}}
 function onDrop(e){drag.value=false;const f=e.dataTransfer?.files?.[0];if(f?.name?.toLowerCase().endsWith('.pdf')||f?.name?.toLowerCase().endsWith('.txt'))upFile.value=f}
 function onFile(e){const f=e.target?.files?.[0];if(f)upFile.value=f}
 

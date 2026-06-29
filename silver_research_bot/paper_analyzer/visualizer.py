@@ -12,16 +12,17 @@ if TYPE_CHECKING:
 
 # ── CSS constants ─────────────────────────────────────────────────
 OVERVIEW_CSS = """
-.overview{max-width:1100px;margin:0 auto 28px}
-.layer{border-radius:12px;padding:18px 24px;margin-bottom:0;border:1.5px solid}
-.layer-title{font-size:16px;font-weight:600;margin-bottom:14px}
-.layer-cards{display:flex;gap:12px;flex-wrap:wrap}
-.lcard{border-radius:8px;padding:12px 16px;min-width:140px;flex:1;border:1px solid}
-.lcard-title{font-size:14px;font-weight:600;margin-bottom:6px}
-.lcard-item{font-size:12px;line-height:1.55;opacity:.85}
-.layer-arrow{text-align:center;font-size:18px;padding:3px 0;color:#999;line-height:1}
-.mermaid-wrap{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:20px;margin:18px 0;text-align:center}
-.mermaid-wrap h3{font-size:14px;color:#555;margin-top:0;margin-bottom:12px;text-align:left}
+.overview{max-width:1100px;margin:0 auto 32px}
+.layer{border-radius:14px;padding:22px 28px;margin-bottom:8px;border:1.5px solid}
+.layer-title{font-size:18px;font-weight:700;margin-bottom:18px;letter-spacing:.02em}
+.layer-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
+.lcard{border-radius:10px;padding:16px 20px;border:1px solid}
+.lcard-title{font-size:15px;font-weight:700;margin-bottom:10px}
+.lcard-item{font-size:13px;line-height:1.7;opacity:.9;margin-bottom:6px}
+.lcard-item:last-child{margin-bottom:0}
+.layer-arrow{text-align:center;font-size:20px;padding:6px 0;color:#999;line-height:1}
+.mermaid-wrap{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.08);padding:24px;margin:22px 0;text-align:center}
+.mermaid-wrap h3{font-size:15px;color:#444;margin-top:0;margin-bottom:14px;text-align:left;font-weight:600}
 """.strip()
 
 COLORS = {
@@ -43,9 +44,50 @@ DIM_ORDER = ["system_model", "problem_formulation", "optimization_algorithm", "e
 
 # ── HTML generation helpers ────────────────────────────────────────
 
+def _render_md_inline(s: str) -> str:
+    """Convert basic Markdown inline syntax to HTML for overview cards."""
+    s = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', s)
+    s = re.sub(r'\*(.+?)\*', r'<em>\1</em>', s)
+    s = re.sub(r'`([^`]+)`', r'<code>\1</code>', s)
+    return s
+
+def _truncate_at_sentence(s: str, max_len: int = 150) -> str:
+    """Truncate text at nearest sentence boundary within max_len chars."""
+    if len(s) <= max_len:
+        return s
+    # Try to find sentence break: 。！？. ! ?
+    for sep in ('。', '！', '？', '. ', '! ', '? ', '\n'):
+        pos = s.rfind(sep, 0, max_len)
+        if pos > max_len * 0.5:
+            return s[:pos + len(sep.rstrip())]
+    # Fallback: break at last space before max_len
+    space = s.rfind(' ', 0, max_len)
+    if space > max_len * 0.5:
+        return s[:space]
+    return s[:max_len]
+
+def _is_table_row(line: str) -> bool:
+    """Check if a line looks like a markdown table row or separator."""
+    stripped = line.strip()
+    if not stripped.startswith('|'):
+        return False
+    # Table separator: |---|----|
+    if re.match(r'^\|[\s\-:|]+\|$', stripped):
+        return True
+    # Table row: has at least 2 pipe chars with content between
+    return stripped.count('|') >= 2 and any(
+        c.isalpha() or c.isdigit() for c in stripped
+    )
+
 def _extract_subsections(text: str) -> list[dict]:
     """Extract ### subsections from markdown analysis text as card candidates."""
-    # Find ### headers and their content
+    # Only strip display math (too large for cards); keep inline $...$ for MathJax
+    _STRIP_DISPLAY = re.compile(r'\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]')
+    def _clean(s: str) -> str:
+        s = _STRIP_DISPLAY.sub('', s)
+        s = re.sub(r'\\[a-zA-Z]+\{[^}]*\}', '', s)
+        s = re.sub(r'\s+', ' ', s).strip()
+        return _render_md_inline(_truncate_at_sentence(s))
     pattern = re.compile(r'^### (.+)$', re.MULTILINE)
     sections = []
     matches = list(pattern.finditer(text))
@@ -53,17 +95,19 @@ def _extract_subsections(text: str) -> list[dict]:
         start = m.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         body = text[start:end].strip()
-        # Extract first 3 meaningful lines for card items
-        items = [l.strip("- ").strip() for l in body.split("\n") if l.strip() and not l.startswith("#")][:3]
+        items = [
+            _clean(l.strip("- ").strip())
+            for l in body.split("\n")
+            if l.strip() and not l.startswith("#") and not _is_table_row(l.strip("- ").strip())
+        ][:3]
         if not items:
-            items = [body[:80]]
-        sections.append({"title": m.group(1).strip(), "items": items})
-    # If no ### headers found, create single card from first paragraphs
+            items = [_clean(body[:150])]
+        sections.append({"title": _clean(m.group(1).strip()), "items": items})
     if not sections:
-        lines = [l.strip("- ").strip() for l in text.split("\n") if l.strip() and not l.startswith("#")]
+        lines = [_clean(l.strip("- ").strip()) for l in text.split("\n") if l.strip() and not l.startswith("#")]
         if lines:
             sections = [{"title": "概述", "items": lines[:3]}]
-    return sections[:5]  # max 5 cards per layer
+    return sections[:5]
 
 
 def _build_overview(analysis: dict[str, str]) -> str:
@@ -178,11 +222,35 @@ async def _llm_experiment_table(
             return content
     except Exception:
         pass
-    # Fallback: build simple table from text
-    lines = [l.strip("- ").strip() for l in exp_text.split("\n") if ":" in l or "%" in l]
+    # Fallback: try to build table from markdown or text
+    raw_lines = exp_text.strip().split("\n")
+    # Detect markdown table: lines with pipes
+    md_rows = [l.strip() for l in raw_lines if l.strip().startswith("|") and l.strip().count("|") >= 2]
+    if len(md_rows) >= 2:
+        # First row = header, skip separator (|---|), rest = data
+        header_row = md_rows[0]
+        data_rows = [r for r in md_rows[1:] if not re.match(r'^\|[\s\-:|]+\|$', r)]
+        header_cells = "".join(
+            f"<th>{c.strip()}</th>" for c in header_row.split("|")[1:-1]
+        )
+        data_html = ""
+        for row in data_rows[:10]:
+            cells = row.split("|")[1:-1]
+            data_html += "<tr>" + "".join(f"<td>{c.strip()}</td>" for c in cells) + "</tr>"
+        if header_cells and data_html:
+            return f"<table class=\"cmp-table\"><tr>{header_cells}</tr>{data_html}</table>"
+
+    # Fallback: key-value pairs (key: value or key=value)
+    lines = []
+    for l in raw_lines:
+        l = l.strip()
+        l = re.sub(r'\*\*([^*]+)\*\*', r'\1', l)
+        l = l.strip("- ").strip()
+        if ":" in l or "%" in l:
+            lines.append(l)
     if lines:
         rows = "".join(
-            f"<tr><td>{l.split(':')[0]}</td><td>{l.split(':')[1] if ':' in l else l}</td></tr>"
+            f"<tr><td>{l.split(':')[0].strip()}</td><td>{l.split(':')[1].strip() if ':' in l else l.strip()}</td></tr>"
             for l in lines[:10]
         )
         return f"<table class=\"cmp-table\"><tr><th>指标</th><th>数值</th></tr>{rows}</table>"
@@ -201,17 +269,21 @@ def _wrap_html(body: str, title: str) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} — 可视化分析</title>
+<script>MathJax={{tex:{{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$'],['\\[','\\]']]}}}};</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
   body {{ font-family: -apple-system, "Microsoft YaHei", sans-serif;
-         max-width: 1100px; margin: 0 auto; padding: 20px;
-         background: #fafafa; color: #222; line-height: 1.6; }}
+         max-width: 1100px; margin: 0 auto; padding: 28px 24px;
+         background: #f5f6f8; color: #222; line-height: 1.65; }}
   h1 {{ border-bottom: 3px solid #2563eb; padding-bottom: 8px; }}
   h2 {{ border-bottom: 2px solid #93c5fd; padding-bottom: 4px; margin-top: 32px; }}
   table {{ border-collapse: collapse; width: 100%; margin: 12px 0; }}
-  th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+  th, td {{ border: 1px solid #ddd; padding: 10px 12px; text-align: left; }}
   th {{ background: #2563eb; color: white; }}
-  .card {{ background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+  .cmp-table {{ font-size: 14px; }}
+  .cmp-table tr:nth-child(even) {{ background: #f8fafc; }}
+  .card {{ background: white; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
            padding: 16px; margin: 12px 0; }}
   .mermaid {{ text-align: center; margin: 20px 0; }}
   .mermaid-error {{ background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px;

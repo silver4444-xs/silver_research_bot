@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class AutoCompact:
-    _RECENT_SUFFIX_MESSAGES = 8（默认保留的会话末尾消息数量）
+    _RECENT_SUFFIX_MESSAGES = 8  # 默认保留的会话末尾消息数量
 
     def __init__(self, sessions: SessionManager, consolidator: Consolidator,
                  session_ttl_minutes: int = 0,

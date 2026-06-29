@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import asyncio
@@ -288,6 +289,25 @@ _workspace = Path("~/.silver_research_bot/workspace").expanduser()
 _paper_manager = PaperManager(workspace=_workspace)
 _paper_orchestrator: PaperOrchestrator | None = None
 
+# ── Reading History ───────────────────────────────────────────────
+_HISTORY_PATH = _workspace / "reading_history.json"
+
+def _load_history():
+    if _HISTORY_PATH.exists():
+        import json
+        try:
+            raw = _HISTORY_PATH.read_text(encoding="utf-8").strip()
+            if raw:
+                return json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+            pass
+    return {"events": [], "bookmarks": {}, "notes": {}}
+
+def _save_history(h):
+    import json
+    _HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _HISTORY_PATH.write_text(json.dumps(h, ensure_ascii=False, indent=2), encoding="utf-8")
+
 
 def _get_orchestrator() -> PaperOrchestrator:
     global _paper_orchestrator
@@ -310,6 +330,8 @@ def _get_orchestrator() -> PaperOrchestrator:
 
 class PaperCompareRequest(BaseModel):
     paper_ids: list[str] = Field(..., min_length=2)
+    structured: bool = True
+    fast: bool = False
 
 
 @app.post("/api/paper/upload")
@@ -386,6 +408,8 @@ def _read_paper_from_fs(paper_dir: Path) -> dict:
             ex = _json.loads(ef.read_text(encoding="utf-8"))
             result["formula_count"] = ex.get("formula_count", 0)
             result["page_count"] = ex.get("page_count", 0)
+            result["formulas"] = ex.get("formulas", [])
+            result["full_text"] = ex.get("full_text", "")
         except Exception: pass
     sf = paper_dir / "analysis_summary.json"
     if sf.exists():
@@ -477,6 +501,61 @@ def paper_export(paper_id: str):
     )
 
 
+_ARTIFACT_EXPORT_MAP = {
+    "translation":           ("translation.md",              "text/markdown",       "全文翻译"),
+    "system_model":          ("analysis_system_model.md",    "text/markdown",       "系统模型分析"),
+    "problem_formulation":   ("analysis_problem.md",         "text/markdown",       "问题表述分析"),
+    "optimization_algorithm":("analysis_algorithm.md",       "text/markdown",       "优化算法分析"),
+    "experiment_design":     ("analysis_experiment.md",      "text/markdown",       "实验设计分析"),
+    "formulas":              ("formula_explanations.md",     "text/markdown",       "公式解读"),
+    "visualization":         ("analysis_visualization.html", "text/html",           "可视化分析"),
+    "citation_graph":        ("citation_graph.html",         "text/html",           "引用图谱"),
+    "review_theory":         ("review_theory.md",            "text/markdown",       "理论审稿意见"),
+    "review_engineering":    ("review_engineering.md",       "text/markdown",       "工程审稿意见"),
+    "review_domain":         ("review_domain.md",            "text/markdown",       "领域审稿意见"),
+    "audit":                 ("audit_report.json",           "application/json",    "审计报告"),
+}
+
+
+@app.get("/api/paper/{paper_id}/export/{artifact_type}")
+def paper_artifact_export(paper_id: str, artifact_type: str):
+    """导出单个分析产物为可下载文件。"""
+    from urllib.parse import quote
+    from fastapi.responses import FileResponse
+
+    if artifact_type not in _ARTIFACT_EXPORT_MAP:
+        raise HTTPException(status_code=400, detail=f"不支持的导出类型: {artifact_type}。"
+                            f"可选: {', '.join(_ARTIFACT_EXPORT_MAP.keys())}")
+
+    filename, mime_type, label = _ARTIFACT_EXPORT_MAP[artifact_type]
+
+    paper_dir = _paper_manager.papers_dir / paper_id
+    if not paper_dir.is_dir():
+        entry = _paper_manager._index.get(paper_id)
+        if entry:
+            paper_dir = Path(entry.get("workspace_dir", ""))
+    if not paper_dir.is_dir():
+        raise HTTPException(status_code=404, detail="论文未找到")
+
+    fp = paper_dir / filename
+    if not fp.exists():
+        raise HTTPException(status_code=404, detail=f"产物文件不存在: {filename}")
+
+    # Derive download filename from paper title
+    title = paper_id
+    entry = _paper_manager._index.get(paper_id)
+    if entry:
+        title = entry.get("title", paper_id)
+    safe_title = "".join(c for c in title[:40] if c.isalnum() or c in "._- ()（）").strip()
+    ext = Path(filename).suffix
+    dl_name = f"{safe_title}_{label}{ext}" if safe_title else f"{paper_id}_{label}{ext}"
+
+    return FileResponse(
+        fp, media_type=mime_type,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(dl_name)}"},
+    )
+
+
 @app.get("/api/paper/{paper_id}/progress")
 def paper_progress(paper_id: str):
     # Direct path construction — always consistent with upload
@@ -516,15 +595,14 @@ def paper_figure(paper_id: str, filename: str):
     img_path = paper_dir / "figures" / filename
     if not img_path.exists():
         raise HTTPException(status_code=404, detail="图片未找到")
-    return FileResponse(str(img_path), media_type="image/png")
-
-
-@app.get("/api/paper/{paper_id}/{artifact_type}")
-def paper_artifact(paper_id: str, artifact_type: str):
-    content = _paper_manager.get_artifact(paper_id, artifact_type)
-    if content is None:
-        raise HTTPException(status_code=404, detail="产物未找到")
-    return {"paper_id": paper_id, "type": artifact_type, "content": content}
+    ext = img_path.suffix.lower()
+    mime_map = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+        ".svg": "image/svg+xml", ".tiff": "image/tiff", ".tif": "image/tiff",
+    }
+    media_type = mime_map.get(ext, "image/png")
+    return FileResponse(str(img_path), media_type=media_type)
 
 
 @app.post("/api/paper/compare")
@@ -532,12 +610,58 @@ async def paper_compare(request: PaperCompareRequest):
     orch = _get_orchestrator()
     comparison = await _paper_manager.compare_papers(
         request.paper_ids, provider=orch.provider, model=orch.model,
+        structured=request.structured, fast=request.fast,
     )
-    return {
+    result = {
         "paper_ids": comparison.paper_ids,
         "dimensions": comparison.dimensions,
         "synthesis": comparison.synthesis,
+        "comparison_html": comparison.comparison_html,
+        "skipped_ids": comparison.skipped_ids,
     }
+    if comparison.structured:
+        sc = comparison.structured
+        result["structured"] = {
+            "paper_ids": sc.paper_ids,
+            "scores": sc.scores,
+            "formula_overlap": sc.formula_overlap,
+            "citation_overlap": sc.citation_overlap,
+            "similarity_matrix": sc.similarity_matrix,
+            "synthesis_md": sc.synthesis_md,
+            "created_at": sc.created_at,
+        }
+        result["chart_data"] = comparison.chart_data
+        result["metrics"] = comparison.metrics
+    return result
+
+
+@app.get("/api/paper/compare/history")
+async def paper_compare_history():
+    return {"comparisons": _paper_manager.list_comparisons()}
+
+
+@app.get("/api/paper/compare/{comparison_id}")
+async def paper_compare_get(comparison_id: str):
+    record = _paper_manager.get_comparison(comparison_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="对比记录未找到")
+    return record
+
+
+@app.delete("/api/paper/compare/{comparison_id}")
+async def paper_compare_delete(comparison_id: str):
+    if not _paper_manager.delete_comparison(comparison_id):
+        raise HTTPException(status_code=404, detail="对比记录未找到")
+    return {"status": "deleted", "comparison_id": comparison_id}
+
+
+@app.get("/api/paper/compare/{comparison_id}/export")
+async def paper_compare_export(comparison_id: str):
+    from fastapi.responses import FileResponse
+    zip_path = _paper_manager.export_comparison(comparison_id)
+    if not zip_path:
+        raise HTTPException(status_code=404, detail="对比记录未找到")
+    return FileResponse(zip_path, media_type="application/zip", filename=f"{comparison_id}.zip")
 
 
 class PaperAskRequest(BaseModel):
@@ -580,6 +704,183 @@ def paper_delete(paper_id: str):
     if not _paper_manager.delete_paper(paper_id):
         raise HTTPException(status_code=404, detail="论文未找到")
     return {"status": "deleted", "paper_id": paper_id}
+
+
+# ── Reading History API ────────────────────────────────────────────
+
+@app.post("/api/paper/{paper_id}/view")
+def paper_record_view(paper_id: str):
+    """记录论文查看事件。"""
+    h = _load_history()
+    h["events"].append({
+        "paper_id": paper_id,
+        "action": "view",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+    if len(h["events"]) > 200:
+        h["events"] = h["events"][-200:]
+    _save_history(h)
+    return {"status": "ok"}
+
+
+@app.get("/api/history/events")
+def history_events(limit: int = 50):
+    """获取阅读历史时间线。"""
+    h = _load_history()
+    events = h["events"][-limit:]
+    events.reverse()
+    for ev in events:
+        pid = ev["paper_id"]
+        p = _paper_manager.get_paper(pid)
+        if not p:
+            pd = _paper_manager.papers_dir / pid
+            if pd.is_dir():
+                p = _read_paper_from_fs(pd)
+        ev["title"] = p.get("title", pid) if p else pid
+        ev["language"] = p.get("language", "?") if p else "?"
+    return {"events": events}
+
+
+@app.get("/api/paper/{paper_id}/bookmark")
+def paper_get_bookmark(paper_id: str):
+    """获取论文书签状态。"""
+    h = _load_history()
+    return {"paper_id": paper_id, "bookmarked": paper_id in h.get("bookmarks", {})}
+
+
+@app.post("/api/paper/{paper_id}/bookmark")
+def paper_toggle_bookmark(paper_id: str):
+    """切换论文书签。"""
+    h = _load_history()
+    bm = h.setdefault("bookmarks", {})
+    if paper_id in bm:
+        del bm[paper_id]
+        status = "unbookmarked"
+    else:
+        bm[paper_id] = True
+        status = "bookmarked"
+    _save_history(h)
+    return {"paper_id": paper_id, "status": status}
+
+
+@app.get("/api/paper/{paper_id}/notes")
+def paper_get_notes(paper_id: str):
+    """获取论文笔记。"""
+    h = _load_history()
+    return {"paper_id": paper_id, "notes": h.get("notes", {}).get(paper_id, "")}
+
+
+class NotesUpdateRequest(BaseModel):
+    notes: str = ""
+
+
+@app.post("/api/paper/{paper_id}/notes")
+def paper_save_notes(paper_id: str, request: NotesUpdateRequest):
+    """保存论文笔记。"""
+    h = _load_history()
+    h.setdefault("notes", {})[paper_id] = request.notes
+    _save_history(h)
+    return {"paper_id": paper_id, "status": "saved"}
+
+
+# ── Research Trends API ────────────────────────────────────────────
+
+_TREND_KEYWORDS = [
+    ("强化学习", ["reinforcement learning", "RL", "MARL", "MADRL", "DQN", "PPO", "A3C", "SAC", "TD3", "Q-learning", "Actor-Critic", "multi-agent"]),
+    ("深度学习", ["deep learning", "DNN", "CNN", "RNN", "LSTM", "Transformer", "attention", "neural network"]),
+    ("图神经网络", ["graph neural", "GNN", "GCN", "GAT", "GATAC", "graph attention", "graph convolution"]),
+    ("无人机/机器人", ["UAV", "drone", "robotics", "robot", "aerial", "multi-rotor", "quadcopter", "fixed-wing"]),
+    ("优化算法", ["optimization", "gradient descent", "SGD", "Adam", "convex", "non-convex", "Lagrangian", "dual", "trajectory"]),
+    ("通信网络", ["communication", "wireless", "5G", "6G", "IoT", "RSSI", "channel", "beamforming", "MIMO", "NOMA"]),
+    ("边缘/云计算", ["edge computing", "cloud", "federated learning", "distributed", "MEC", "computation offloading"]),
+    ("计算机视觉", ["computer vision", "object detection", "segmentation", "image", "video", "YOLO", "ResNet"]),
+    ("自然语言处理", ["NLP", "language model", "LLM", "GPT", "BERT", "transformer", "text", "embedding"]),
+    ("资源分配", ["resource allocation", "scheduling", "power control", "bandwidth", "spectrum", "energy efficiency"]),
+]
+
+def _extract_keywords(text: str) -> list[str]:
+    matched = set()
+    lower = text.lower()
+    for category, patterns in _TREND_KEYWORDS:
+        for pat in patterns:
+            if pat.lower() in lower:
+                matched.add(category)
+                break
+    return list(matched)
+
+
+@app.get("/api/trends")
+def get_trends():
+    """聚合所有论文的研究关键词趋势。"""
+    papers = _paper_manager.list_papers()
+    keyword_timeline = []
+    category_counts = {}
+    for p in papers:
+        if p.get("status") != "completed":
+            continue
+        pid = p["paper_id"]
+        paper_data = _paper_manager.get_paper(pid)
+        if not paper_data:
+            pd = _paper_manager.papers_dir / pid
+            if pd.is_dir():
+                paper_data = _read_paper_from_fs(pd)
+            else:
+                continue
+        search_text = (paper_data.get("title", "") + " " +
+                       paper_data.get("translation", "")[:5000] + " " +
+                       paper_data.get("system_model", "")[:2000] + " " +
+                       paper_data.get("problem_formulation", "")[:2000] + " " +
+                       paper_data.get("optimization_algorithm", "")[:2000])
+        keywords = _extract_keywords(search_text)
+        for kw in keywords:
+            category_counts[kw] = category_counts.get(kw, 0) + 1
+        keyword_timeline.append({
+            "paper_id": pid,
+            "title": paper_data.get("title", pid)[:120],
+            "uploaded_at": p.get("uploaded_at", "")[:10],
+            "language": p.get("language", "en"),
+            "keywords": keywords,
+        })
+    keyword_timeline.sort(key=lambda x: x["uploaded_at"] or "")
+    categories_over_time = []
+    running_counts = {}
+    for entry in keyword_timeline:
+        for kw in entry["keywords"]:
+            running_counts[kw] = running_counts.get(kw, 0) + 1
+        categories_over_time.append({
+            "date": entry["uploaded_at"], "paper_id": entry["paper_id"],
+            "title": entry["title"], **running_counts.copy(),
+        })
+    return {
+        "category_counts": category_counts,
+        "keyword_timeline": keyword_timeline,
+        "categories_over_time": categories_over_time,
+    }
+
+
+@app.get("/api/paper/{paper_id}/pdf")
+def paper_pdf(paper_id: str):
+    """Serve the original PDF file for embedded PDF.js reader."""
+    from fastapi.responses import FileResponse
+    paper_dir = _paper_manager.papers_dir / paper_id
+    if not paper_dir.is_dir():
+        raise HTTPException(status_code=404, detail="论文未找到")
+    orig = paper_dir / "original.pdf"
+    if not orig.exists():
+        candidates = list(paper_dir.glob("*.pdf"))
+        if not candidates:
+            raise HTTPException(status_code=404, detail="原始PDF未找到")
+        orig = candidates[0]
+    return FileResponse(str(orig), media_type="application/pdf",
+                        headers={"Content-Disposition": "inline"})
+
+
+@app.get("/api/paper/{paper_id}/{artifact_type}")
+def paper_artifact(paper_id: str, artifact_type: str):
+    content = _paper_manager.get_artifact(paper_id, artifact_type)
+    if content is None:
+        raise HTTPException(status_code=404, detail="产物未找到")
+    return {"paper_id": paper_id, "type": artifact_type, "content": content}
 
 
 @app.websocket("/api/paper/{paper_id}/stream")
