@@ -27,6 +27,7 @@ web/dist/
 Thumbs.db
 
 # Project — local config / secrets
+CLAUDE.md
 *.local.json
 .env
 .env.*
