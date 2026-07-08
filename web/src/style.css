@@ -608,10 +608,12 @@ pre { font-size: 12px; background: var(--c-bg-input); color: var(--c-text); padd
 .cmp-pmeta { font-size:11px; color:var(--c-text-muted); margin-bottom:2px }
 .cmp-pscore { font-size:13px; font-weight:700; color:var(--clr,var(--c-accent)); margin-top:4px }
 /* Sub-tab bar */
-.ctabs { display:flex; gap:2px; flex-wrap:wrap; border-bottom:1px solid var(--c-border); margin-bottom:var(--s-3); padding-bottom:0 }
-.ctab { padding:6px 14px; font-size:12px; font-weight:500; color:var(--c-text-muted); background:none; border:none; border-radius:var(--r-sm) var(--r-sm) 0 0; cursor:pointer; transition:all var(--t-fast) }
+.ctabs { display:flex; gap:2px; flex-wrap:wrap; border-bottom:1px solid var(--c-border); margin-bottom:var(--s-2); padding-bottom:0 }
+.ctab { padding:4px 12px; font-size:12px; font-weight:500; color:var(--c-text-muted); background:none; border:none; border-radius:var(--r-sm) var(--r-sm) 0 0; cursor:pointer; transition:all var(--t-fast) }
 .ctab:hover { color:var(--c-text-secondary); background:var(--c-bg-input) }
 .ctab.on { color:var(--c-accent); background:var(--c-bg-input); border-bottom:2px solid var(--c-accent); margin-bottom:-1px }
+/* Compact card variant for tab containers */
+.card-tabs { padding-top:var(--s-3); padding-bottom:var(--s-3) }
 /* Overview */
 .cmp-overview { display:grid; grid-template-columns:1fr 1fr; gap:var(--s-4) }
 @media (max-width:768px){ .cmp-overview{grid-template-columns:1fr} }

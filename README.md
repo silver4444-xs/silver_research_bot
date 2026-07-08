@@ -1,4 +1,4 @@
-# Silver Research — 论文研读 AI Agent
+﻿# Silver Research — 论文研读 AI Agent
 
 上传 PDF 论文即可自动完成：全文翻译(英文)→ 四维系统分析 → 公式逐条解读 → Mermaid 可视化 → 质量审计 → 横向对比。
 
@@ -9,7 +9,7 @@
 # 2. 启动后端
 cd silver_research_bot
 pip install fastapi uvicorn pymupdf
-uvicorn silver_research_bot.research_app:app --reload --port 8000
+uvicorn silver_research_bot.research_app:app --reload --port 8765
 
 # 3. 启动前端
 cd web && npm install && npm run dev

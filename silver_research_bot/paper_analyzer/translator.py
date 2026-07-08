@@ -240,9 +240,7 @@ def _validate_formulas(translated: str) -> str:
     if not translated:
         return translated
     fixed = translated
-    # Fix 1: \\boldsymbol → \\mathbf (more widely supported)
-    fixed = re.sub(r"(?<!\$)\\boldsymbol\{(.+?)\}", r"\\mathbf{\1}", fixed)
-    # Fix 2: Missing backslash before math commands embedded in text
+    # Fix 1: Missing backslash before math commands embedded in text
     fixed = re.sub(r"(?<![\\a-zA-Z])(mathbf|mathcal|mathbb|mathit|mathrm)\{", r"\\\1{", fixed)
     # Fix 3: Unescaped _ and ^ outside $...$ (convert to LaTeX subscript/superscript)
     # Only fix within formula blocks (between $...$ or $$...$$)

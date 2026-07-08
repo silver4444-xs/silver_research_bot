@@ -27,6 +27,8 @@ SYMBOL_TO_LATEX: dict[int, str] = {
     # Greek variants
     0x03D1: r"\vartheta", 0x03D5: r"\varphi", 0x03D6: r"\varpi",
     0x03F1: r"\varrho", 0x03F5: r"\epsilon",
+    # Mathematical operators not in Greek block
+    0x2206: r"\Delta", 0x2212: "-",
     # Operators
     0x2200: r"\forall", 0x2201: r"\complement", 0x2202: r"\partial",
     0x2203: r"\exists", 0x2204: r"\nexists", 0x2205: r"\emptyset",
@@ -89,8 +91,8 @@ FORMULA_MARKERS = [
     re.compile(r"\b(min|max|argmin|argmax|sup|inf|lim|det|tr|s\.t\.)\b"),
     re.compile(r"\\begin\{[a-z]+\}"),
     re.compile(r"\\[a-zA-Z]+(\{[^}]*\})*"),
-    re.compile(r"[=+\-*/<>≤≥≠≈≡∈⊂⊆∪∩∫∑∏∮∇∂⋅×±]"),
-    re.compile(r"[Α-ωϑϕϖϱϵ]"),
+    re.compile(r"[-=+*/<>≤≥≠≈≡∈⊂⊆∪∩∫∑∏∮∇∂⋅×±−]"),
+    re.compile(r"[Α-ωϑϕϖϱϵ∆]"),
     re.compile(r"\b(?:subject\s+to|for\s+all|there\s+exists)\b"),
     re.compile(r"\\mathbf|\\mathcal|\\mathbb|\\boldsymbol|\\mathit|\\mathrm|\\mathsf|\\mathtt"),
 ]
@@ -109,14 +111,279 @@ def _unicode_to_latex(char: str) -> str:
     return char
 
 
+# Canonical regex for LaTeX math commands & Unicode math symbols — single source of truth
+# NOTE: ASCII operators (= + -) are NOT here — they belong in FORMULA_MARKERS/ops regex
+# BS+BS = literal backslash in compiled regex; BS+'b' = word boundary in compiled regex
+_BS = "\\"
+_COMPLETE_FORMULA_RE = re.compile(
+    # Unicode math operators & relations
+    r"[≤≥≠≈≡∝∼∈⊂⊆→⇒]"
+    r"|[−×⋅±∇∂∆]"  # Unicode: MINUS, TIMES, DOT, PLUS-MINUS, NABLA, PARTIAL, INCREMENT
+    # LaTeX relations
+    "|" + _BS + _BS + "leq|" + _BS + _BS + "geq|" + _BS + _BS + "neq|"
+    + _BS + _BS + "approx|" + _BS + _BS + "equiv|" + _BS + _BS + "propto|"
+    + _BS + _BS + "sim|" + _BS + _BS + "simeq"
+    + "|" + _BS + _BS + "triangleq|" + _BS + _BS + "doteq|"
+    + _BS + _BS + "mapsto|" + _BS + _BS + "implies|" + _BS + _BS + "iff|"
+    + _BS + _BS + "colon"
+    # LaTeX arithmetic
+    + "|" + _BS + _BS + "times|" + _BS + _BS + "cdot|" + _BS + _BS + "pm|"
+    + _BS + _BS + "mp|" + _BS + _BS + "div|" + _BS + _BS + "ast|"
+    + _BS + _BS + "star|" + _BS + _BS + "circ"
+    + "|" + _BS + _BS + "oplus|" + _BS + _BS + "ominus|" + _BS + _BS + "otimes|"
+    + _BS + _BS + "odot|" + _BS + _BS + "oslash"
+    # LaTeX structural
+    + "|" + _BS + _BS + "frac|" + _BS + _BS + "dfrac|" + _BS + _BS + "tfrac"
+    + "|" + _BS + _BS + "sum|" + _BS + _BS + "prod|" + _BS + _BS + "coprod"
+    + "|" + _BS + _BS + "int|" + _BS + _BS + "iint|" + _BS + _BS + "iiint|" + _BS + _BS + "oint"
+    + "|" + _BS + _BS + "sqrt|" + _BS + _BS + "binom"
+    + "|" + _BS + _BS + "begin" + _BS + "{"
+    + "|" + _BS + _BS + "over" + _BS + "b"
+    # LaTeX math functions
+    + "|" + _BS + _BS + "min|" + _BS + _BS + "max|"
+    + _BS + _BS + "argmin|" + _BS + _BS + "argmax|"
+    + _BS + _BS + "sup|" + _BS + _BS + "inf"
+    + "|" + _BS + _BS + "lim|" + _BS + _BS + "det|"
+    + _BS + _BS + "gcd|" + _BS + _BS + "lcm"
+    + "|" + _BS + _BS + "sin|" + _BS + _BS + "cos|"
+    + _BS + _BS + "tan|" + _BS + _BS + "cot|"
+    + _BS + _BS + "sec|" + _BS + _BS + "csc"
+    + "|" + _BS + _BS + "arcsin|" + _BS + _BS + "arccos|" + _BS + _BS + "arctan"
+    + "|" + _BS + _BS + "log|" + _BS + _BS + "ln|" + _BS + _BS + "exp"
+    + "|" + _BS + _BS + "dim|" + _BS + _BS + "ker|"
+    + _BS + _BS + "deg|" + _BS + _BS + "arg|" + _BS + _BS + "mod"
+    + "|" + _BS + _BS + "Pr|" + _BS + _BS + "mathbb" + _BS + "{E" + _BS + "}"
+    # LaTeX math symbols
+    + "|" + _BS + _BS + "partial|" + _BS + _BS + "nabla|" + _BS + _BS + "Delta|" + _BS + _BS + "Box"
+)
+
+
 def _looks_like_formula(text: str) -> bool:
     if not text.strip():
         return False
+    stripped = text.strip()
+
     score = 0
-    for marker in FORMULA_MARKERS:
+    has_greek = False
+    for i, marker in enumerate(FORMULA_MARKERS):
         if marker.search(text):
             score += 1
-    return score >= 1 or any(c in text for c in "∑∏∫∂∇")
+            if i == 4:
+                has_greek = True
+
+    # Multiple math indicators → definitely math
+    if score >= 2:
+        # Reject English compound words: hyphen connecting 2+ long alpha words
+        # that only trigger keyword (marker[0]) + hyphen (marker[3])
+        if re.search(r'[-—–]', stripped):
+            parts = re.split(r'[-—–]', stripped)
+            if '' not in parts:
+                alpha_parts = [p for p in parts if re.sub(r'[^a-zA-Z]', '', p)]
+                if len(alpha_parts) >= 2:
+                    max_len = max(len(re.sub(r'[^a-zA-Z]', '', p)) for p in alpha_parts)
+                    if max_len >= 3 and not has_greek and not re.search(r'[_^{}\\]', stripped):
+                        return False
+        return True
+
+    # Greek letters are inherently mathematical, regardless of length
+    if has_greek:
+        return True
+
+    # Single indicator: check if it's just a hyphen/dash in English text
+    if score == 1:
+        # Pure math operator with no letters → always math (=, +, ×, −, etc.)
+        if re.match(r'^[=+*/<>≤≥≠≈≡∈⊂⊆∪∩∫∑∏∮∇∂⋅×±−]+$', stripped):
+            return True
+        # If the only indicator is a hyphen or dash, check for English compound words
+        if re.search(r'[-—–]', stripped):
+            # Spaces around hyphen → math operator (max - min)
+            if not re.search(r'\s[-—–]\s', stripped):
+                parts = re.split(r'[-—–]', stripped)
+                # Trailing/leading hyphen: opera-, -mail
+                if '' in parts:
+                    return False
+                # Alpha on BOTH sides with one long = English compound (e-mail, AoI-Aware)
+                # Short-alpha both sides = math (x-y). Digit on one side = math (TIt-1)
+                alpha_parts = [p for p in parts if p.replace(' ', '').isalpha()]
+                if len(alpha_parts) >= 2:
+                    max_len = max(len(p.replace(' ', '')) for p in alpha_parts)
+                    if max_len >= 3:
+                        return False
+        # Non-hyphen single indicator (e.g. ∆t containing a Greek letter): needs length ≥ 2
+        if len(stripped) >= 2:
+            return True
+
+    return any(c in text for c in "∑∏∫∂∇")
+
+
+# CJK Unicode ranges for prose contamination checks
+_CJK_CHARS_RE = re.compile(r'[一-鿿㐀-䶿豈-﫿぀-ゟ゠-ヿ가-힯]')
+# Trailing binary/relational operator: formula is incomplete (RHS missing).
+# Excludes + and - when preceded by ^ or _ (superscript/subscript: x^+, x_-)
+_TRAILING_OP_RE = re.compile(r'(?:[=<>≤≥≠≈≡∈⊂⊆]|(?<![_^])[+−\-])\s*$')
+# Leading binary/relational operator: formula is a fragment (LHS missing)
+_LEADING_OP_RE = re.compile(r'^\s*[=+−\-<>≤≥≠≈≡∈⊂⊆]')
+# Generic LaTeX command (backslash + 2+ letters) — catches \varphi, \emptyset, etc.
+# that are not in the curated _COMPLETE_FORMULA_RE whitelist
+_GENERIC_LATEX_RE = re.compile(r'\\[a-zA-Z]{2,}')
+
+
+def _is_valid_formula(text: str) -> bool:
+    stripped = text.strip()
+    if len(stripped) < 3:
+        return False
+
+    # Reject merge artifacts: $ inside the extracted content means two
+    # $...$ blocks were incorrectly fused by _merge_nearby_dollar_blocks
+    if '$' in stripped:
+        return False
+
+    # Reject any formula containing CJK characters — these are prose
+    # fragments that got accidentally merged into $...$ blocks
+    if _CJK_CHARS_RE.search(stripped):
+        return False
+
+    # Reject formulas ending with a bare binary/relational operator
+    # (= + - ≤ ≥ etc.) — the RHS was stripped away, this is a fragment
+    if _TRAILING_OP_RE.search(stripped):
+        return False
+
+    # Reject formulas starting with a bare binary/relational operator
+    # (= \emptyset, + x, ≤ R) — the LHS was stripped away, this is a fragment
+    if _LEADING_OP_RE.search(stripped):
+        return False
+
+    has_sub_sup = bool(re.search(r'[_^]', stripped))
+    has_latex = bool(_COMPLETE_FORMULA_RE.search(stripped))  # Canonical LaTeX check
+    has_any_latex = bool(_GENERIC_LATEX_RE.search(stripped))  # \varphi, \emptyset, etc.
+    has_greek = bool(re.search(r'[Α-ωϑϕϖϱϵ∆]', stripped))
+    has_math_kw = bool(re.search(r'\b(min|max|argmin|argmax|sup|inf|lim|det|tr|s\.t\.)\b', stripped))
+    ops = re.findall(r'[-=+*/<>≤≥≠≈≡∈⊂⊆∪∩∫∑∏∮∇∂⋅×±−]', stripped)
+
+    math_signals = sum([has_sub_sup, has_latex, has_any_latex, has_greek, has_math_kw, len(ops) >= 1])
+    if math_signals < 1:
+        return False
+
+    # Reject lone LaTeX symbol: \phi, \varphi without equation structure
+    if (has_latex or has_any_latex) and math_signals == 1 and not has_sub_sup and not has_greek:
+        cmds = re.findall(r'\\[a-zA-Z]+', stripped)
+        args = re.findall(r'\{[^}]*\}', stripped)
+        if len(cmds) >= 1 and len(args) == 0:
+            # Check if significant non-LaTeX content exists beyond the commands
+            rest = re.sub(r'\\[a-zA-Z]+', '', stripped).strip()
+            if not rest:
+                return False  # Only LaTeX command(s) with no other content
+
+    # Reject English compound words with hyphens or dashes
+    if re.search(r'[-—–]', stripped):
+        if not re.search(r'\s[-—–]\s', stripped):
+            parts = re.split(r'[-—–]', stripped)
+            if '' in parts:
+                return False
+            # Extract alpha-only content from each part (strips parens, colons, etc.)
+            def _alpha(s):
+                return re.sub(r'[^a-zA-Z]', '', s)
+            # Any alpha on both sides + one long = English compound
+            # (e-mail, (MEC)-enabled, (e-mail:)
+            alpha_parts = [_alpha(p) for p in parts if _alpha(p)]
+            if len(alpha_parts) >= 2:
+                max_len = max(len(a) for a in alpha_parts)
+                if max_len >= 3 and math_signals == 1 and not has_sub_sup:
+                    return False
+
+    # Reject prose: 3+ letter sequences >= 3 without sub/sup.
+    # Strip LaTeX commands first — \frac, \partial etc. are math, not English.
+    _no_latex = re.sub(r'\\[a-zA-Z]+(\{[^}]*\})*', ' ', stripped)
+    letter_seqs = re.findall(r'[a-zA-Z]{3,}', _no_latex)
+    if len(letter_seqs) >= 3 and math_signals <= 2 and not has_sub_sup:
+        return False
+
+    # Reject garbled short-token soup: = D t nyt n,n type fragments
+    tokens = stripped.split()
+    short_tokens = [t for t in tokens if len(t) <= 2]
+    # Threshold ≥4: "x + y" (3 short tokens) is a valid simple formula
+    if len(short_tokens) >= 4 and len(ops) <= 1 and not has_sub_sup:
+        return False
+
+    # Reject prose-like formulas: ops + short tokens only, no LaTeX/sub/sup.
+    # Only reject "many short tokens with few operators" prose patterns.
+    # Simple "x + y" / "x = y" are valid formulas; leading/trailing operator
+    # checks catch truly incomplete fragments like "= \emptyset" and "x =".
+    if not has_sub_sup and not has_latex and not has_greek:
+        non_op_tokens = [t for t in tokens if t not in {
+            '=', '+', '-', '−', '×', '⋅', '<', '>', '≤', '≥', '∈', '⊂', '⊆',
+        }]
+        short_count = sum(1 for t in non_op_tokens if len(t) <= 2)
+        if short_count >= 4 and len(ops) < len(tokens) * 0.35:
+            return False
+
+    # Reject lone generic LaTeX symbol with garbled suffix:
+    # "\varphi t", "\varphi t n,mdt n,m n (1)" — only signal is \varphi,
+    # the rest is fragment soup. Allow structured formulas like "x \in [0, 2\pi]"
+    # where brackets contain real math (numbers, operators).
+    if math_signals == 1 and has_any_latex and not has_latex and not has_sub_sup and not has_greek:
+        no_cmd = re.sub(r'\\[a-zA-Z]+', '', stripped).strip()
+        no_cmd_tokens = no_cmd.split()
+        # 0-1 tokens after stripping LaTeX → lone symbol + fragment: "\varphi t"
+        if len(no_cmd_tokens) <= 1:
+            return False
+        # Has balanced brackets with math content → structured: "x \in [0, 2\pi]"
+        if no_cmd.count('[') == no_cmd.count(']') and no_cmd.count('(') == no_cmd.count(')'):
+            outside = re.sub(r'\[[^\]]*\]|\([^\)]*\)', '', no_cmd).strip()
+            if outside:
+                outside_tokens = outside.split()
+                short_outside = sum(1 for t in outside_tokens if len(t) <= 3)
+                if short_outside >= 3:
+                    return False  # "t n,mdt n,m n (1)" type
+            # Otherwise: structured brackets → keep
+        elif no_cmd_tokens and all(len(t) <= 5 for t in no_cmd_tokens):
+            return False  # unbalanced + all short tokens → garbled
+
+    # Reject generic LaTeX + prose-like tokens: "\varphi t n,m = 1"
+    # where the only LaTeX is a weak command (\varphi, \varpi, etc.) and
+    # the non-LaTeX content has ≥3 isolated single letters (prose pattern).
+    # Strip brace-wrapped arguments too — they're part of LaTeX structure.
+    if has_any_latex and not has_latex and not has_sub_sup and len(ops) <= 1:
+        no_cmd = re.sub(r'\\[a-zA-Z]+', '', stripped)
+        no_braces = re.sub(r'\{[^}]*\}', '', no_cmd)
+        single_letters = re.findall(r'\b[a-zA-Z]\b', no_braces)
+        if len(single_letters) >= 3:
+            return False
+
+    # Reject LaTeX operator + bare English word: "\leq R max" type fragments
+    # where "max" is a plain word, not \max with braces
+    if has_latex and not has_sub_sup and not has_greek and len(tokens) <= 4:
+        bare_words = [t for t in tokens if re.match(r'^[a-zA-Z]{2,}$', t)]
+        if bare_words and len(tokens) <= 3:
+            return False
+
+    # Reject unbalanced brackets — incomplete fragments like "\in [0, 2\pi"
+    # where the closing bracket/paren was outside the $...$ block
+    bracket_pairs = [('{', '}'), ('[', ']'), ('(', ')')]
+    for op_br, cl_br in bracket_pairs:
+        depth = 0
+        i = 0
+        while i < len(stripped):
+            if stripped[i] == '\\' and i + 1 < len(stripped):
+                i += 2  # Skip escaped brace
+                continue
+            if stripped[i] == op_br:
+                depth += 1
+            elif stripped[i] == cl_br:
+                depth -= 1
+            i += 1
+        if depth < 0:
+            return False  # Extra closing bracket
+        if depth > 0:
+            # Unbalanced opening bracket — OK only if there's strong math structure
+            if not has_sub_sup and not (_COMPLETE_FORMULA_RE.search(stripped)):
+                return False
+
+    core = re.sub(r'[\s,.;:()\[\]{}|]', '', stripped)
+    if len(core) < 3:
+        return False
+
+    return True
 
 
 def _convert_formula_text(text: str) -> str:
@@ -127,6 +394,70 @@ def _convert_formula_text(text: str) -> str:
         else:
             result.append(char)
     return "".join(result)
+
+
+def _merge_nearby_dollar_blocks(text: str) -> str:
+    r"""Merge fragmented $...$ blocks separated by short sub/superscript text.
+
+    PDF sub/super-script spans often fail _looks_like_formula (no math markers),
+    creating fragments like: $\varpi$ U,t n $\in$ $[0,1]$
+    This merges them back: $\varpi U,t n \in [0,1]$
+    """
+    if "$" not in text:
+        return text
+
+    import re as _re
+
+    # CJK Unicode ranges: Chinese, Japanese, Korean
+    _CJK_RE = _re.compile(r'[一-鿿㐀-䶿豈-﫿぀-ゟ゠-ヿ가-힯]')
+
+    def _should_merge(first, gap, second):
+        gap = gap.strip()
+        if not gap:
+            return True
+        if len(gap) > 8:
+            return False
+        if _re.search(r"[.!?;:]", gap):
+            return False
+        if _re.search(r"[a-zA-Z]{3,}", gap):
+            return False
+        # Reject non-ASCII gaps — subscript/superscript text is always ASCII
+        if any(ord(c) > 127 for c in gap):
+            return False
+        # Reject CJK characters — explanatory prose between math symbols
+        if _CJK_RE.search(gap):
+            return False
+        # Reject comma-separated short tokens (e.g. "t n,m") — likely
+        # prose fragments, not genuine sub/superscript notation
+        if "," in gap:
+            tokens = gap.replace(",", " ").split()
+            if tokens and all(len(t) <= 2 for t in tokens):
+                return False
+        return True
+
+    prev = None
+    result = text
+    while prev != result:
+        prev = result
+        result = _re.sub(
+            r"(?<!\$)\$([^$]+?)\$"
+            r"(?!\$)"
+            r"\s*"
+            r"([^$\n]{0,8}?)"
+            r"\s*"
+            r"(?<!\$)\$([^$]+?)\$",
+            lambda m: (
+                "$" + " ".join(p for p in [
+                    m.group(1).strip(),
+                    m.group(2).strip(),
+                    m.group(3).strip(),
+                ] if p) + "$"
+                if _should_merge(m.group(1), m.group(2), m.group(3))
+                else m.group(0)
+            ),
+            result,
+        )
+    return result
 
 
 METADATA_PATTERNS = [
@@ -258,15 +589,39 @@ def extract_pdf_text(pdf_path: str | Path, output_dir: str | Path | None = None)
                 line_has_math = False
                 prev_span_was_math = False
 
+                math_buffer: list[str] = []
+                prev_math_size = 0.0
+                prev_math_y0 = 0.0
                 for span in line["spans"]:
                     text = span["text"]
                     font = span.get("font", "")
                     size = span.get("size", 0)
                     block_max_size = max(block_max_size, size)
 
-                    if _is_math_font(font) or _looks_like_formula(text):
+                    has_unicode_math = any(ord(c) in SYMBOL_TO_LATEX for c in text)
+                    is_math = _is_math_font(font) or _looks_like_formula(text) or has_unicode_math
+                    # Adjacency: small text near math span → likely sub/superscript
+                    if not is_math and prev_span_was_math and prev_math_size > 0 and size > 0:
+                        span_bbox = span.get("bbox", None)
+                        span_y0 = span_bbox[1] if span_bbox else 0
+                        size_ratio = prev_math_size / max(size, 0.5)
+                        y_diff = span_y0 - prev_math_y0
+                        if size_ratio >= 1.25 and abs(y_diff) > 1.0:
+                            is_math = True
+                    if is_math:
                         converted = _convert_formula_text(text)
-                        line_text += f" ${converted}$ "
+                        # Sub/superscript recovery: detect font size change
+                        span_bbox = span.get("bbox", None)
+                        span_y0 = span_bbox[1] if span_bbox else 0
+                        if prev_span_was_math and prev_math_size > 0 and size > 0:
+                            size_ratio = prev_math_size / max(size, 0.5)
+                            y_diff = span_y0 - prev_math_y0
+                            if size_ratio >= 1.3:
+                                if y_diff > 1.5:  # lower → subscript
+                                    converted = "_" + converted
+                                elif y_diff < -1.5:  # higher → superscript
+                                    converted = "^" + converted
+                        math_buffer.append(converted)
                         line_has_math = True
                         block_has_formula = True
                         if prev_span_was_math and block_formulas:
@@ -274,12 +629,25 @@ def extract_pdf_text(pdf_path: str | Path, output_dir: str | Path | None = None)
                         else:
                             block_formulas.append(converted)
                         prev_span_was_math = True
+                        prev_math_size = size
+                        prev_math_y0 = span_y0
                     else:
+                        if math_buffer:
+                            line_text += f" ${' '.join(math_buffer)}$ "
+                            math_buffer = []
                         line_text += text
                         prev_span_was_math = False
-                block_lines.append(line_text.strip())
+                        prev_math_size = 0.0
+                        prev_math_y0 = 0.0
+
+                if math_buffer:
+                    line_text += f" ${' '.join(math_buffer)}$ "
+
+                merged = _merge_nearby_dollar_blocks(line_text.strip())
+                block_lines.append(merged)
 
             block_text = " ".join(block_lines).strip()
+            block_text = _merge_nearby_dollar_blocks(block_text)  # cross-line merge
             if not block_text:
                 continue
             block_sizes.append((block_max_size, block_text))
@@ -296,9 +664,10 @@ def extract_pdf_text(pdf_path: str | Path, output_dir: str | Path | None = None)
                     break
 
             if block_has_formula:
-                for fm_text in block_formulas:
-                    fm_text = fm_text.strip()
-                    if len(fm_text) > 3:
+                # Extract $...$ blocks from merged block_text (unified path)
+                for m in re.finditer(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)", block_text):
+                    fm_text = m.group(1).strip()
+                    if len(fm_text) > 3 and _is_valid_formula(fm_text):
                         formula_idx += 1
                         formulas.append({
                             "index": formula_idx, "latex": fm_text,
@@ -461,14 +830,16 @@ def _extract_text_paper(path: Path, paper_id: str, workspace: str | Path) -> dic
     if len(title) < 10 and len(lines) > 1:
         title = lines[1]
 
-    # Detect LaTeX formulas
+    # Detect LaTeX formulas — filter through unified validator
     fm_re = re.compile(r'\$\$([^$]+)\$\$|\$([^$]+)\$')
     formulas = []
     for m in fm_re.finditer(full_text):
-        formulas.append({"index": len(formulas) + 1,
-                         "latex": (m.group(1) or m.group(2)).strip(),
-                         "context": full_text[max(0, m.start() - 60):m.end() + 60],
-                         "page": 1})
+        latex = (m.group(1) or m.group(2)).strip()
+        if len(latex) > 3 and _is_valid_formula(latex):
+            formulas.append({"index": len(formulas) + 1,
+                             "latex": latex,
+                             "context": full_text[max(0, m.start() - 60):m.end() + 60],
+                             "page": 1})
 
     # Detect markdown sections
     sec_re = re.compile(r'^#{1,4}\s+(.+)$', re.MULTILINE)

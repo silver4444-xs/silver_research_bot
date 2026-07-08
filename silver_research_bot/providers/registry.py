@@ -1,4 +1,4 @@
-"""
+﻿"""
 整个 LLM Provider管理系统的单一数据源，集中定义了所有支持的 LLM 服务商的元数据，供配置匹配、环境变量设置、提供者实例化等环节使用
 添加新提供商：
   1. 在下方的 PROVIDERS 中添加一个 ProviderSpec。
@@ -389,7 +389,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         backend="openai_compat",
         is_direct=True,
         is_local=True,
-        default_api_base="http://localhost:8000/v3",
+        default_api_base="http://localhost:8765/v3",
     ),
 
     # === 6. 辅助提供者 ============================

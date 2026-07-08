@@ -11,6 +11,7 @@ from __future__ import annotations
 import re as _re
 from typing import TYPE_CHECKING
 
+from silver_research_bot.paper_analyzer.extractor import _is_valid_formula, _COMPLETE_FORMULA_RE, _merge_nearby_dollar_blocks
 from silver_research_bot.utils.prompt_templates import render_template
 
 if TYPE_CHECKING:
@@ -36,53 +37,20 @@ FORMULA_CSS = """<style>
 </style>"""
 
 
-_COMPLETE_FORMULA_RE = _re.compile(
-    r"(?<!\\)=(?![=}])"
-    r"|[≤≥≠≈≡∝∼∈⊂⊆→⇒]"
-    r"|\\\\leq|\\\\geq|\\\\neq|\\\\approx|\\\\equiv|\\\\propto|\\\\sim|\\\\simeq"
-    r"|\\\\triangleq|\\\\doteq|\\\\mapsto|\\\\implies|\\\\iff|\\\\colon"
-    r"|(?<!\\)\+(?![\+}])"
-    r"|(?<!\\)-(?![\-}])"
-    r"|\\\\times|\\\\cdot|\\\\pm|\\\\mp|\\\\div|\\\\ast|\\\\star|\\\\circ"
-    r"|\\\\oplus|\\\\ominus|\\\\otimes|\\\\odot|\\\\oslash"
-    r"|\\\\frac|\\\\dfrac|\\\\tfrac"
-    r"|\\\\sum|\\\\prod|\\\\coprod"
-    r"|\\\\int|\\\\iint|\\\\iiint|\\\\oint"
-    r"|\\\\sqrt|\\\\binom"
-    r"|\\\\begin\{"
-    r"|\\\\over\\b"
-    r"|\\\\min\\b|\\\\max\\b|\\\\argmin|\\\\argmax|\\\\sup\\b|\\\\inf\\b"
-    r"|\\\\lim\\b|\\\\det\\b|\\\\gcd\\b|\\\\lcm\\b"
-    r"|\\\\sin\\b|\\\\cos\\b|\\\\tan\\b|\\\\cot\\b|\\\\sec\\b|\\\\csc\\b"
-    r"|\\\\arcsin|\\\\arccos|\\\\arctan"
-    r"|\\\\log\\b|\\\\ln\\b|\\\\exp\\b"
-    r"|\\\\dim\\b|\\\\ker\\b|\\\\deg\\b|\\\\arg\\b|\\\\mod\\b"
-    r"|\\\\Pr\\b|\\\\mathbb\\{E\\}"
-    r"|\\\\partial|\\\\nabla|\\\\Delta|\\\\Box"
-)
-
-
-def _is_complete_formula(latex: str) -> bool:
-    if not _COMPLETE_FORMULA_RE.search(latex):
-        return False
-    has_strong_math = bool(_re.search(
-        r'\\\\|[_^]|[∑∏∫∂∇α-ω≤≥≠≈≡∈⊂⊆→⇒±×⋅]|\d', latex,
-    ))
-    if not has_strong_math:
-        letter_seqs = _re.findall(r'[a-zA-Z]{3,}', latex)
-        if len(letter_seqs) >= 2:
-            return False
-    return True
-
-
 def _strip_fragment_cards(html: str) -> str:
     import re
     def _is_fragment(c):
         c = c.strip()
-        if not c: return True
-        if "\\" in c: return False
-        m = re.sub(r"[\s=+\-*/^_<>≤≥≠≈≡∈⊂⊆∪∩∫∑∏∮∇∂⋅×±,;:.()\[\]{}|'\\]", "", c)
-        return len(m) < 3
+        if not c:
+            return True
+        if "\\" in c:
+            return False
+        if re.search(r'[_^=+<>≤≥≠≈≡∈⊂⊆∪∩∫∑∏∇∂]', c):
+            return False
+        alpha_only = re.sub(r'[\s,.;:()\[\]{}|]', '', c)
+        if len(alpha_only) <= 3 and re.match(r'^[a-zA-Z]+$', alpha_only):
+            return True
+        return False
     result, parts = [], re.split(r'(<div class="frow">)', html)
     i = 0
     while i < len(parts):
@@ -142,42 +110,127 @@ def _balance_braces(latex: str) -> str:
     return ''.join(chars)
 
 
+def _merge_equation_fragments(text: str) -> str:
+    """Merge fragmented $lhs$ = $rhs$ patterns into single $...$ blocks.
+
+    Before: $\varpi$ t = $\frac{...}{...}$ (5)  or  acct ( $\varpi$ t|S ) = $\frac{...}{...}$ (6)
+    After:  $\varpi t = \frac{...}{...}$ (5)   or   $acct ( \varpi t|S ) = \frac{...}{...}$ (6)
+    """
+    def _merge_line(line):
+        # Pattern: optional-prefix $lhs$ gap = $rhs$ → merge into single $ block
+        # Captures up to 40 non-$ chars before first $ for LHS context (e.g. "acct (")
+        return _re.sub(
+            r'([^$\n]{0,40}?)\$([^$]+)\$\s*'
+            r'([^$\n]{0,30}?)\s*=\s*'
+            r'\$([^$]+)\$',
+            lambda m: (
+                '$' + _re.sub(r'[^\x00-\x7F\\_{}^$]', '', m.group(1).strip()) + ' ' + m.group(2) + ' '
+                + m.group(3).strip() + ' = '
+                + m.group(4) + '$'
+            ),
+            line,
+        )
+    lines = text.split('\n')
+    return '\n'.join(_merge_line(line) for line in lines)
+
+
 def _promote_display_math(text: str) -> str:
+    """Promote standalone $...$ to display $$...$$ based on structural context only."""
     def _replace(m):
         inner, start, end_pos = m.group(1), m.start(), m.end()
-        if len(_re.findall(r'[a-zA-Z]{2,}', inner)) >= 5: return m.group(0)
+        # English prose detection: 5+ letter sequences WITHOUT LaTeX → don't promote
+        if '\\' not in inner:
+            if len(_re.findall(r'[a-zA-Z]{2,}', inner)) >= 5:
+                return m.group(0)
+        # Standalone on its own line → display math
         ls = text.rfind("\n", 0, start) + 1; le = text.find("\n", end_pos)
         if le == -1: le = len(text)
         if not text[ls:start].strip() and not text[end_pos:le].strip(): return "$$" + inner + "$$"
+        # Followed by equation number (N) → display math
         after = text[end_pos:end_pos + 10].strip()
         if _re.match(r"^\(\d+[a-z]?\)", after): return "$$" + inner + "$$"
         return m.group(0)
     return _re.sub(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)", _replace, text)
 
 
+def _is_substantial_math(latex: str) -> bool:
+    """Inline $...$ is a real formula, not a lone LaTeX symbol like \\varpi or $x$."""
+    if not latex or len(latex) < 5:
+        return False
+
+    # Equation structure (operators / relations) -> always substantial
+    if _re.search(r'[=+<>≤≥≠≈≡∈⊂⊆∪∩∫∑∏∇∂⋅×±−]', latex):
+        return True
+
+    # Subscript/superscript -> substantial
+    if _re.search(r'[_^]', latex):
+        return True
+
+    # Strip LaTeX commands + notation, measure remaining content
+    stripped = _re.sub(r'\\[a-zA-Z]+(\{[^}]*\})*', ' ', latex)
+    stripped = _re.sub(r'[\s,.;:()\[\]{}|−]', '', stripped)
+
+    if not stripped:
+        # Only LaTeX commands remain — reject lone \varpi, \epsilon, \in{}
+        cmds = _re.findall(r'\\[a-zA-Z]+', latex)
+        if len(cmds) == 1:
+            structural = {'frac', 'dfrac', 'tfrac', 'sqrt', 'binom', 'sum', 'prod',
+                          'int', 'iint', 'iiint', 'oint', 'begin'}
+            return cmds[0][1:] in structural
+        return len(cmds) >= 2
+
+    return len(stripped) >= 1
+
+
 def extract_formulas_from_translation(translation_text: str) -> list[dict]:
-    text = _promote_display_math(translation_text)
+    # Step 0a: Merge fragmented $ blocks (sub/superscript spans between math spans)
+    text = _merge_nearby_dollar_blocks(translation_text)
+    # Step 0b: Merge fragmented equation pairs ($lhs$ = $rhs$)
+    text = _merge_equation_fragments(text)
+    # Step 1: Promote standalone $...$ to $$...$$ based on structural context
+    text = _promote_display_math(text)
     formulas, idx = [], 0
     blocks = []
+    # Extract display formulas ($$...$$ and \[...\])
     for m in _re.finditer(r"\$\$(.+?)\$\$", text, _re.DOTALL):
         blocks.append({"start": m.start(), "end": m.end(), "latex": m.group(1).strip()})
     for m in _re.finditer(r"\\\[(.+?)\\\]", text, _re.DOTALL):
         blocks.append({"start": m.start(), "end": m.end(), "latex": m.group(1).strip()})
+    # Also extract substantial inline $...$ formulas (embedded in prose after merge)
+    for m in _re.finditer(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)", text):
+        inner = m.group(1).strip()
+        if len(inner) < 5: continue
+        if "◈" in inner: continue
+        if not _is_substantial_math(inner): continue
+        blocks.append({"start": m.start(), "end": m.end(), "latex": inner})
     for block in blocks:
         latex = block["latex"]
         if not latex or len(latex) < 5: continue
         if "◈" in latex: continue
+        # Reject formulas containing CJK characters — explanatory prose contamination
+        if _re.search(r'[一-鿿㐀-䶿豈-﫿぀-ゟ゠-ヿ가-힯]', latex): continue
+        # Gate through unified validator (same as PDF extraction path)
+        if not _is_valid_formula(latex): continue
         eq_num = None
         tm = _re.search(r"\\tag\{(\d+[a-z]?)\}", latex)
         if tm: eq_num = tm.group(1); latex = _re.sub(r"\\tag\{\d+[a-z]?\}", "", latex).strip()
         latex = _balance_braces(latex)
-        ls = _re.findall(r'[a-zA-Z]{2,}', latex)
-        if len(ls) >= 3 and not ('\\' in latex or '_' in latex or '^' in latex or _re.search(r'[∑∏∫∂∇α-ω≤≥≠≈≡∈⊂⊆→⇒±×⋅]', latex)): continue
-        if _re.search(r"\b(?:the|and|for|are|was|not|but|all|has|had|have|can|may|our|their|this|that|with|from|they|were|been|will|would|using|based|given|shown|found|used|made|taken|seen|said|proposed|defined|described|obtained|derived|computed|method|system|model|result|paper|figure|table|section|problem|approach|algorithm|scheme|strategy|technique|performance|simulation|experiment|analysis|scenario|respectively|therefore|however|moreover|furthermore|denotes|represents|indicates|corresponds|follows|satisfies|line|lines|Algorithm|Run|respect|regard|terms|order)\b", latex, _re.IGNORECASE): continue
-        if "-" in latex:
-            parts = latex.replace(" ", "").split("-")
-            if len([p for p in parts if p.isalpha() and len(p) >= 2]) >= 2: continue
-        if not _is_complete_formula(latex): continue
+        # Minimal filtering for translation path (translation is authoritative source)
+        # Only filter obvious English prose, not formula content
+        if '\\' not in latex:
+            # Hyphen connecting two alpha words → English compound (e-mail, AoI-Aware)
+            if _re.search(r'[-—–]', latex):
+                parts = _re.split(r'[-—–]', latex.replace(" ", ""))
+                if '' not in parts:
+                    ap = [_re.sub(r'[^a-zA-Z]', '', p) for p in parts]
+                    ap = [a for a in ap if len(a) >= 2]
+                    if len(ap) >= 2: continue
+            # 5+ two-letter sequences without LaTeX → English prose
+            if len(_re.findall(r'[a-zA-Z]{2,}', latex)) >= 5: continue
+        # English prose word blacklist — LLM may accidentally output English in $$ blocks
+        # Strip \text{...} blocks first to avoid rejecting legitimate formulas
+        _cleaned = _re.sub(r'\\text\{[^}]*\}', '', latex)
+        if _re.search(r"\b(?:the|and|for|are|was|not|but|all|has|had|have|can|may|our|their|this|that|with|from|they|were|been|will|would|using|based|given|shown|found|used|made|taken|seen|said|proposed|defined|described|obtained|derived|computed|method|system|model|result|paper|figure|table|section|problem|approach|algorithm|scheme|strategy|technique|performance|simulation|experiment|analysis|scenario|respectively|therefore|however|moreover|furthermore|denotes|represents|indicates|corresponds|follows|satisfies|line|lines|Algorithm|Run|respect|regard|terms|order)\b", _cleaned, _re.IGNORECASE): continue
         if not eq_num:
             post = text[block["end"]:block["end"] + 20]
             tr = _re.match(r"^\s*\((\d+[a-z]?)\)", post)
@@ -197,9 +250,14 @@ async def explain_formulas(
     if translation_text:
         tf = extract_formulas_from_translation(translation_text)
         if tf: return await _explain_translation_formulas(tf, full_text, provider, model, batch_size)
+        # Translation exists but no display formulas extracted → translation is authoritative
+        return _wrap_html('<p class="sec-title">公式检测结果</p><div class="frow"><div class="fnum">!</div><div class="fbody"><div class="fmean">翻译中未检测到展示公式（$$...$$），或所有公式均被过滤。建议检查翻译产物中公式的质量。</div></div>')
     if not formulas: return _wrap_html(await _explain_from_text(full_text, provider, model))
+    # Defense-in-depth: filter garbage formulas from extracted.json before LLM processing
+    valid_formulas = [f for f in formulas if _is_valid_formula(f.get("latex", ""))]
+    if not valid_formulas: return _wrap_html(await _explain_from_text(full_text, provider, model))
     sp = render_template("paper/formula_explainer.md", strip=True)
-    batches = [formulas[i:i + batch_size] for i in range(0, len(formulas), batch_size)]
+    batches = [valid_formulas[i:i + batch_size] for i in range(0, len(valid_formulas), batch_size)]
     parts = []
     for i, batch in enumerate(batches):
         ft = "\n\n".join(f"公式{f['index']} (仅解释此LaTeX，必须完整复制到fexpr): {f.get('latex', '')}\n(参考上下文，不解释): {f.get('context', '')[:200]}" for f in batch)

@@ -390,6 +390,7 @@ class OpenAICompatProvider(LLMProvider):
         temperature: float,
         reasoning_effort: str | None,
         tool_choice: str | dict[str, Any] | None,
+        response_format: dict | None = None,
     ) -> dict[str, Any]:
         """
         构造 Chat Completions API 参数
@@ -471,6 +472,9 @@ class OpenAICompatProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice or "auto"
+
+        if response_format is not None:
+            kwargs["response_format"] = response_format
 
         return kwargs
 
@@ -1081,6 +1085,7 @@ class OpenAICompatProvider(LLMProvider):
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        response_format: dict | None = None,
     ) -> LLMResponse:
         """
         流程：
@@ -1108,7 +1113,7 @@ class OpenAICompatProvider(LLMProvider):
 
             kwargs = self._build_kwargs(
                 messages, tools, model, max_tokens, temperature,
-                reasoning_effort, tool_choice,
+                reasoning_effort, tool_choice, response_format,
             )
             return self._parse(await self._client.chat.completions.create(**kwargs))
         except Exception as e:
