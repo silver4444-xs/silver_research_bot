@@ -1,0 +1,153 @@
+{
+  "_说明": "这是 silver_research_bot 的完整配置模板。复制到 ~/.silver_research_bot/config.json 并根据需要修改。所有字段均为可选，未设置时使用默认值。",
+  "_注意": "API 密钥建议使用环境变量 ${VAR_NAME} 引用（如 \"${OPENAI_API_KEY}\"），避免明文存储。",
+
+  "agents": {
+    "defaults": {
+      "model": "deepseek-chat",
+      "provider": "auto",
+      "temperature": 0.1,
+      "maxTokens": 8192,
+      "contextWindowTokens": 65536,
+      "contextBlockLimit": null,
+      "maxToolIterations": 200,
+      "maxToolResultChars": 16000,
+      "providerRetryMode": "standard",
+      "reasoningEffort": null,
+      "timezone": "UTC",
+      "workspace": "~/.silver_research_bot/workspace",
+      "unifiedSession": false,
+      "idleCompactAfterMinutes": 0,
+      "disabledSkills": [],
+
+      "dream": {
+        "intervalH": 2,
+        "cron": null,
+        "modelOverride": null,
+        "maxBatchSize": 20,
+        "maxIterations": 15,
+        "annotateLineAges": true
+      },
+
+      "memory": {
+        "shortTermWindow": 20,
+        "importanceThreshold": 3.0,
+        "decayHalflifeDays": 7.0,
+        "consolidationIntervalHours": 2.0,
+        "conflictDetectionEnabled": true,
+        "activeRetrievalEnabled": true,
+        "activeRetrievalTopK": 3,
+        "projectMemoryEnabled": true
+      }
+    }
+  },
+
+  "api": {
+    "host": "127.0.0.1",
+    "port": 8900,
+    "timeout": 120.0
+  },
+
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 18790,
+    "heartbeat": {
+      "enabled": true,
+      "intervalS": 1800,
+      "keepRecentMessages": 8
+    }
+  },
+
+  "channels": {
+    "sendProgress": true,
+    "sendToolHints": false,
+    "sendMaxRetries": 3,
+    "transcriptionProvider": "groq"
+  },
+
+  "providers": {
+    "custom": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "azure_openai": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "anthropic": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "openai": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "openrouter": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "deepseek": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "groq": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "zhipu": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "dashscope": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "vllm": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "gemini": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "moonshot": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "minimax": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "minimax_anthropic": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "mistral": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "stepfun": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "xiaomi_mimo": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "aihubmix": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "siliconflow": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "volcengine": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "volcengine_coding_plan": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "byteplus": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "byteplus_coding_plan": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "qianfan": { "apiKey": null, "apiBase": null, "extraHeaders": null },
+    "ollama": { "apiKey": null, "apiBase": "http://localhost:11434/v1", "extraHeaders": null },
+    "lm_studio": { "apiKey": null, "apiBase": "http://localhost:1234/v1", "extraHeaders": null },
+    "ovms": { "apiKey": null, "apiBase": "http://localhost:8765/v3", "extraHeaders": null }
+  },
+
+  "tools": {
+    "restrictToWorkspace": false,
+    "ssrfWhitelist": [],
+    "mcpServers": {},
+
+    "web": {
+      "enable": true,
+      "proxy": null,
+      "search": {
+        "provider": "duckduckgo",
+        "apiKey": "",
+        "baseUrl": "",
+        "maxResults": 5,
+        "timeout": 30
+      }
+    },
+
+    "exec": {
+      "enable": true,
+      "timeout": 60,
+      "pathAppend": "",
+      "sandbox": "",
+      "allowedEnvKeys": []
+    },
+
+    "my": {
+      "enable": true,
+      "allowSet": false
+    }
+  },
+
+  "rag": {
+    "embeddingModel": "text-embedding-3-small",
+    "embeddingDimensions": 1536,
+    "bm25Weight": 0.3,
+    "vectorWeight": 0.7,
+    "coarseTopK": 20,
+    "finalTopK": 5,
+    "rerankEnabled": true
+  },
+
+  "paperSearch": {
+    "pubmedEmail": "",
+    "semanticScholarApiKey": ""
+  },
+
+  "research": {
+    "workspaceSubdir": "research",
+    "templateFormat": "article",
+    "executionProfile": "local_cpu",
+    "maxRetries": 2,
+    "defaultEpochs": 18,
+    "defaultSeeds": [7, 13, 29],
+    "stageModels": {}
+  }
+}

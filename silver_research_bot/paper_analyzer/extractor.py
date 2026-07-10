@@ -121,11 +121,12 @@ _COMPLETE_FORMULA_RE = re.compile(
     r"|[−×⋅±∇∂∆]"  # Unicode: MINUS, TIMES, DOT, PLUS-MINUS, NABLA, PARTIAL, INCREMENT
     # LaTeX relations
     "|" + _BS + _BS + "leq|" + _BS + _BS + "geq|" + _BS + _BS + "neq|"
+    + _BS + _BS + "le|" + _BS + _BS + "ge|" + _BS + _BS + "ne|"  # shorthands
     + _BS + _BS + "approx|" + _BS + _BS + "equiv|" + _BS + _BS + "propto|"
     + _BS + _BS + "sim|" + _BS + _BS + "simeq"
     + "|" + _BS + _BS + "triangleq|" + _BS + _BS + "doteq|"
     + _BS + _BS + "mapsto|" + _BS + _BS + "implies|" + _BS + _BS + "iff|"
-    + _BS + _BS + "colon"
+    + _BS + _BS + "colon|" + _BS + _BS + "mid|" + _BS + _BS + "parallel"
     # LaTeX arithmetic
     + "|" + _BS + _BS + "times|" + _BS + _BS + "cdot|" + _BS + _BS + "pm|"
     + _BS + _BS + "mp|" + _BS + _BS + "div|" + _BS + _BS + "ast|"
@@ -155,6 +156,45 @@ _COMPLETE_FORMULA_RE = re.compile(
     + "|" + _BS + _BS + "Pr|" + _BS + _BS + "mathbb" + _BS + "{E" + _BS + "}"
     # LaTeX math symbols
     + "|" + _BS + _BS + "partial|" + _BS + _BS + "nabla|" + _BS + _BS + "Delta|" + _BS + _BS + "Box"
+    # Greek lowercase — commonly appear in formulas without other LaTeX commands
+    + "|" + _BS + _BS + "alpha|" + _BS + _BS + "beta|" + _BS + _BS + "gamma|"
+    + _BS + _BS + "delta|" + _BS + _BS + "epsilon|" + _BS + _BS + "varepsilon|"
+    + _BS + _BS + "zeta|" + _BS + _BS + "eta|" + _BS + _BS + "theta|"
+    + _BS + _BS + "vartheta|" + _BS + _BS + "iota|" + _BS + _BS + "kappa|"
+    + _BS + _BS + "lambda|" + _BS + _BS + "mu|" + _BS + _BS + "nu|"
+    + _BS + _BS + "xi|" + _BS + _BS + "pi|" + _BS + _BS + "varpi|"
+    + _BS + _BS + "rho|" + _BS + _BS + "varrho|" + _BS + _BS + "sigma|"
+    + _BS + _BS + "varsigma|" + _BS + _BS + "tau|" + _BS + _BS + "upsilon|"
+    + _BS + _BS + "phi|" + _BS + _BS + "varphi|" + _BS + _BS + "chi|"
+    + _BS + _BS + "psi|" + _BS + _BS + "omega"
+    # Greek uppercase
+    + "|" + _BS + _BS + "Gamma|" + _BS + _BS + "Theta|" + _BS + _BS + "Lambda|"
+    + _BS + _BS + "Xi|" + _BS + _BS + "Pi|" + _BS + _BS + "Sigma|"
+    + _BS + _BS + "Upsilon|" + _BS + _BS + "Phi|" + _BS + _BS + "Psi|"
+    + _BS + _BS + "Omega"
+    # Set notation & logic
+    + "|" + _BS + _BS + "forall|" + _BS + _BS + "exists|" + _BS + _BS + "neg|"
+    + _BS + _BS + "emptyset|" + _BS + _BS + "varnothing|"
+    + _BS + _BS + "in" + "\\b|" + _BS + _BS + "notin|" + _BS + _BS + "ni" + "\\b|"
+    + _BS + _BS + "subset|" + _BS + _BS + "supset|"
+    + _BS + _BS + "subseteq|" + _BS + _BS + "supseteq|"
+    + _BS + _BS + "cup" + "\\b|" + _BS + _BS + "cap" + "\\b|"
+    + _BS + _BS + "vee|" + _BS + _BS + "wedge"
+    # Math font commands
+    + "|" + _BS + _BS + "mathcal|" + _BS + _BS + "mathbf|" + _BS + _BS + "boldsymbol|"
+    + _BS + _BS + "mathit|" + _BS + _BS + "mathrm|" + _BS + _BS + "mathsf|"
+    + _BS + _BS + "mathtt"
+    # Decorations
+    + "|" + _BS + _BS + "hat|" + _BS + _BS + "tilde|" + _BS + _BS + "bar|"
+    + _BS + _BS + "vec|" + _BS + _BS + "dot|" + _BS + _BS + "ddot|"
+    + _BS + _BS + "widehat|" + _BS + _BS + "widetilde"
+    # More structural / big operators
+    + "|" + _BS + _BS + "left|" + _BS + _BS + "right|"
+    + _BS + _BS + "bigcup|" + _BS + _BS + "bigcap|"
+    + _BS + _BS + "langle|" + _BS + _BS + "rangle|"
+    + _BS + _BS + "lVert|" + _BS + _BS + "rVert|"
+    + _BS + _BS + "infty|" + _BS + _BS + "text|"
+    + _BS + _BS + "cdots|" + _BS + _BS + "ldots|" + _BS + _BS + "ddots|" + _BS + _BS + "vdots"
 )
 
 
@@ -218,11 +258,22 @@ def _looks_like_formula(text: str) -> bool:
 
 # CJK Unicode ranges for prose contamination checks
 _CJK_CHARS_RE = re.compile(r'[一-鿿㐀-䶿豈-﫿぀-ゟ゠-ヿ가-힯]')
-# Trailing binary/relational operator: formula is incomplete (RHS missing).
-# Excludes + and - when preceded by ^ or _ (superscript/subscript: x^+, x_-)
-_TRAILING_OP_RE = re.compile(r'(?:[=<>≤≥≠≈≡∈⊂⊆]|(?<![_^])[+−\-])\s*$')
-# Leading binary/relational operator: formula is a fragment (LHS missing)
-_LEADING_OP_RE = re.compile(r'^\s*[=+−\-<>≤≥≠≈≡∈⊂⊆]')
+# Trailing binary/relational operator — Unicode AND LaTeX: formula is incomplete
+_TRAILING_OP_RE = re.compile(
+    r'(?:[=<>≤≥≠≈≡∈⊂⊆]|(?<![_^])[+−\-]'
+    r'|\\leq|\\geq|\\neq|\\approx|\\equiv|\\propto|\\sim|\\simeq'
+    r'|\\times|\\cdot|\\pm|\\mp|\\div'
+    r'|\\oplus|\\ominus|\\otimes|\\odot'
+    r')\s*$'
+)
+# Leading binary/relational operator — Unicode AND LaTeX: formula is a fragment
+_LEADING_OP_RE = re.compile(
+    r'^\s*(?:[=+−\-<>≤≥≠≈≡∈⊂⊆]'
+    r'|\\leq|\\geq|\\neq|\\approx|\\equiv|\\propto|\\sim|\\simeq'
+    r'|\\times|\\cdot|\\pm|\\mp|\\div'
+    r'|\\oplus|\\ominus|\\otimes|\\odot'
+    r')'
+)
 # Generic LaTeX command (backslash + 2+ letters) — catches \varphi, \emptyset, etc.
 # that are not in the curated _COMPLETE_FORMULA_RE whitelist
 _GENERIC_LATEX_RE = re.compile(r'\\[a-zA-Z]{2,}')
@@ -239,8 +290,10 @@ def _is_valid_formula(text: str) -> bool:
         return False
 
     # Reject any formula containing CJK characters — these are prose
-    # fragments that got accidentally merged into $...$ blocks
-    if _CJK_CHARS_RE.search(stripped):
+    # fragments that got accidentally merged into $...$ blocks.
+    # Strip \text{...} first — CJK inside LaTeX \text{} commands is legitimate.
+    _cjk_check = re.sub(r'\\text\{[^}]*\}', '', stripped)
+    if _CJK_CHARS_RE.search(_cjk_check):
         return False
 
     # Reject formulas ending with a bare binary/relational operator
@@ -255,7 +308,9 @@ def _is_valid_formula(text: str) -> bool:
 
     has_sub_sup = bool(re.search(r'[_^]', stripped))
     has_latex = bool(_COMPLETE_FORMULA_RE.search(stripped))  # Canonical LaTeX check
-    has_any_latex = bool(_GENERIC_LATEX_RE.search(stripped))  # \varphi, \emptyset, etc.
+    # Only count _GENERIC_LATEX_RE when _COMPLETE_FORMULA_RE did NOT match —
+    # prevents double-counting commands (e.g. \varphi) that match both regexes
+    has_any_latex = bool(_GENERIC_LATEX_RE.search(stripped)) and not has_latex
     has_greek = bool(re.search(r'[Α-ωϑϕϖϱϵ∆]', stripped))
     has_math_kw = bool(re.search(r'\b(min|max|argmin|argmax|sup|inf|lim|det|tr|s\.t\.)\b', stripped))
     ops = re.findall(r'[-=+*/<>≤≥≠≈≡∈⊂⊆∪∩∫∑∏∮∇∂⋅×±−]', stripped)
@@ -298,11 +353,29 @@ def _is_valid_formula(text: str) -> bool:
     if len(letter_seqs) >= 3 and math_signals <= 2 and not has_sub_sup:
         return False
 
+    # Reject arrow-only fragments without equation structure:
+    # \leftarrow, \rightarrow, \leftrightarrow etc. by themselves
+    # Allow when '=' is present (part of a complete equation)
+    if has_any_latex and not has_sub_sup and not has_latex:
+        arrows = re.findall(
+            r'\\(?:leftarrow|rightarrow|leftrightarrow|Rightarrow|Leftarrow|longrightarrow|longleftarrow|mapsto)',
+            stripped,
+        )
+        if arrows and '=' not in stripped and len(ops) <= 1:
+            return False
+
     # Reject garbled short-token soup: = D t nyt n,n type fragments
     tokens = stripped.split()
     short_tokens = [t for t in tokens if len(t) <= 2]
     # Threshold ≥4: "x + y" (3 short tokens) is a valid simple formula
-    if len(short_tokens) >= 4 and len(ops) <= 1 and not has_sub_sup:
+    # But LaTeX commands (\\times, \\cdot, \\oplus etc.) provide structure —
+    # tolerate more short tokens for formulas with canonical LaTeX.
+    _st_threshold = 6 if (has_latex or has_any_latex) else 4
+    if len(short_tokens) >= _st_threshold and len(ops) <= 1 and not has_sub_sup:
+        return False
+
+    # Reject formulas with too many tokens and too few structure elements
+    if len(tokens) >= 8 and len(ops) <= 1 and not has_sub_sup:
         return False
 
     # Reject prose-like formulas: ops + short tokens only, no LaTeX/sub/sup.
@@ -321,23 +394,53 @@ def _is_valid_formula(text: str) -> bool:
     # "\varphi t", "\varphi t n,mdt n,m n (1)" — only signal is \varphi,
     # the rest is fragment soup. Allow structured formulas like "x \in [0, 2\pi]"
     # where brackets contain real math (numbers, operators).
+    # Also allow compound LaTeX expressions: 2+ commands → structured ("\forall i \in \mathcal{N}")
     if math_signals == 1 and has_any_latex and not has_latex and not has_sub_sup and not has_greek:
         no_cmd = re.sub(r'\\[a-zA-Z]+', '', stripped).strip()
         no_cmd_tokens = no_cmd.split()
+        latex_cmds = re.findall(r'\\[a-zA-Z]+', stripped)
         # 0-1 tokens after stripping LaTeX → lone symbol + fragment: "\varphi t"
-        if len(no_cmd_tokens) <= 1:
+        # UNLESS there are 2+ LaTeX commands forming a compound expression
+        if len(no_cmd_tokens) <= 1 and len(latex_cmds) < 2:
             return False
         # Has balanced brackets with math content → structured: "x \in [0, 2\pi]"
         if no_cmd.count('[') == no_cmd.count(']') and no_cmd.count('(') == no_cmd.count(')'):
-            outside = re.sub(r'\[[^\]]*\]|\([^\)]*\)', '', no_cmd).strip()
+            outside = re.sub(r'\[[^\]]*\]|\([^\)]*\)|\{[^}]*\}', '', no_cmd).strip()
             if outside:
                 outside_tokens = outside.split()
                 short_outside = sum(1 for t in outside_tokens if len(t) <= 3)
-                if short_outside >= 3:
-                    return False  # "t n,mdt n,m n (1)" type
+                if short_outside >= 2 and len(ops) == 0:
+                    return False  # "t ,\tau" type: all short tokens, zero operators
             # Otherwise: structured brackets → keep
         elif no_cmd_tokens and all(len(t) <= 5 for t in no_cmd_tokens):
             return False  # unbalanced + all short tokens → garbled
+
+    # Reject bare LaTeX command + garbled short-token suffix:
+    # "\varphi t n,m = 1", "\varphi t n,mdt n,m n (1)" — the LaTeX cmd
+    # is in _COMPLETE_FORMULA_RE (has_latex=True) but the non-LaTeX content
+    # is fragment soup: comma-connected short tokens or ≥4 isolated single letters.
+    if has_latex and not has_sub_sup and not has_greek and len(ops) <= 2:
+        bare_latex_cmds = re.findall(r'\\[a-zA-Z]+', stripped)
+        bare_args = re.findall(r'\{[^}]*\}', stripped)
+        if len(bare_latex_cmds) == 1 and len(bare_args) == 0:
+            no_cmd = re.sub(r'\\[a-zA-Z]+', '', stripped)
+            # Comma-connected short tokens: "n,mdt", "t n,m" — subscript fragments
+            comma_parts = re.findall(r'[a-zA-Z]+(?:,[a-zA-Z]+)+', no_cmd)
+            if comma_parts:
+                all_short = all(
+                    all(len(p) <= 3 for p in cp.split(','))
+                    for cp in comma_parts
+                )
+                if all_short:
+                    return False
+            # Excessive single-letter tokens → prose pattern
+            single_letters = re.findall(r'\b[a-zA-Z]\b', no_cmd)
+            if len(single_letters) >= 4:
+                return False
+            # Lone command + ≤1 token: "\varphi", "\varphi t"
+            no_cmd_tokens = no_cmd.split()
+            if len(no_cmd_tokens) <= 1:
+                return False
 
     # Reject generic LaTeX + prose-like tokens: "\varphi t n,m = 1"
     # where the only LaTeX is a weak command (\varphi, \varpi, etc.) and
@@ -375,8 +478,23 @@ def _is_valid_formula(text: str) -> bool:
         if depth < 0:
             return False  # Extra closing bracket
         if depth > 0:
-            # Unbalanced opening bracket — OK only if there's strong math structure
-            if not has_sub_sup and not (_COMPLETE_FORMULA_RE.search(stripped)):
+            # Unbalanced opening bracket — OK only with sub/superscript structure
+            if not has_sub_sup:
+                return False
+
+    # Reject single decorated variable with no equation structure.
+    # x_i, p_{i,j}, \mathbf{Q}_i^R(t), \varphi_i are variables, not formulas.
+    # A formula needs at least one of: operator/relation, structural LaTeX,
+    # math keyword, or multiple LaTeX commands forming a compound expression.
+    if not has_latex and len(ops) == 0 and not has_math_kw and not has_greek:
+        latex_cmds = re.findall(r'\\[a-zA-Z]+', stripped)
+        if len(latex_cmds) < 2:
+            # Strip sub/superscript and LaTeX — what remains is the base identifier
+            base = re.sub(r'[_^]\{[^}]*\}', '', stripped)
+            base = re.sub(r'[_^]\S', '', base)
+            base = re.sub(r'\\[a-zA-Z]+(\{[^}]*\})*', '', base)
+            base = re.sub(r'[\s,.;:()\[\]{}|]', '', base)
+            if len(base) <= 5:
                 return False
 
     core = re.sub(r'[\s,.;:()\[\]{}|]', '', stripped)
@@ -415,11 +533,9 @@ def _merge_nearby_dollar_blocks(text: str) -> str:
         gap = gap.strip()
         if not gap:
             return True
-        if len(gap) > 8:
+        if len(gap) > 20:
             return False
         if _re.search(r"[.!?;:]", gap):
-            return False
-        if _re.search(r"[a-zA-Z]{3,}", gap):
             return False
         # Reject non-ASCII gaps — subscript/superscript text is always ASCII
         if any(ord(c) > 127 for c in gap):
@@ -427,11 +543,18 @@ def _merge_nearby_dollar_blocks(text: str) -> str:
         # Reject CJK characters — explanatory prose between math symbols
         if _CJK_RE.search(gap):
             return False
-        # Reject comma-separated short tokens (e.g. "t n,m") — likely
-        # prose fragments, not genuine sub/superscript notation
+        # Reject 3+ letter English word sequences, but allow when math
+        # operators (comma, caret, underscore, equals, binary ops) are present
+        if _re.search(r"[a-zA-Z]{3,}", gap):
+            if not _re.search(r"[,=_^<>≤≥∈⊂+−\-]", gap):
+                return False
+        # Reject comma-separated tokens ONLY when the tokens include
+        # 3+ letter English words — short tokens with commas are
+        # genuine subscript/superscript notation
         if "," in gap:
             tokens = gap.replace(",", " ").split()
-            if tokens and all(len(t) <= 2 for t in tokens):
+            has_alpha_words = any(_re.search(r"[a-zA-Z]{3,}", t) for t in tokens)
+            if has_alpha_words and tokens and all(len(t) <= 4 for t in tokens):
                 return False
         return True
 
@@ -443,7 +566,7 @@ def _merge_nearby_dollar_blocks(text: str) -> str:
             r"(?<!\$)\$([^$]+?)\$"
             r"(?!\$)"
             r"\s*"
-            r"([^$\n]{0,8}?)"
+            r"([^$\n]{0,20}?)"
             r"\s*"
             r"(?<!\$)\$([^$]+?)\$",
             lambda m: (
@@ -723,6 +846,11 @@ def extract_pdf_text(pdf_path: str | Path, output_dir: str | Path | None = None)
 
     full_text = "\n\n".join(all_text_parts)
     full_text = _filter_metadata_lines(full_text)
+
+    # Post-process: fix Σ (U+03A3) → \sum when used as summation operator (followed by _{)
+    for f in formulas:
+        if "\\Sigma" in f.get("latex", ""):
+            f["latex"] = re.sub(r'\\Sigma(\s*[_^])', r'\\sum\1', f["latex"])
 
     return {
         "pages": pages,

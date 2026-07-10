@@ -487,7 +487,13 @@ class Config(BaseSettings):
                 return spec.default_api_base
         return None
 
-    model_config = ConfigDict(env_prefix="silver_research_bot_", env_nested_delimiter="__")
+    model_config = ConfigDict(
+        env_prefix="silver_research_bot_",
+        env_nested_delimiter="__",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
     '配置可以从环境变量自动加载，前缀为 silver_research_bot_，嵌套分隔符为 __'
 
 class ResearchConfig(Base):

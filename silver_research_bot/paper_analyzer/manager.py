@@ -157,6 +157,14 @@ class PaperManager:
         self._save_index()
         return True
 
+    def delete_all_papers(self) -> int:
+        """删除所有论文。返回删除数量。"""
+        count = 0
+        for paper_id in list(self._index.keys()):
+            if self.delete_paper(paper_id):
+                count += 1
+        return count
+
     MAX_COMPARE_PAPERS = 8
     COMPARISONS_DIR = "comparisons"
 

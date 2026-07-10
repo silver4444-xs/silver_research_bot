@@ -664,6 +664,11 @@ async def paper_compare_export(comparison_id: str):
     return FileResponse(zip_path, media_type="application/zip", filename=f"{comparison_id}.zip")
 
 
+class PaperBatchDeleteRequest(BaseModel):
+    paper_ids: list[str] | None = None  # None = 删除全部
+    delete_all: bool = False
+
+
 class PaperAskRequest(BaseModel):
     question: str = Field(..., min_length=1)
 
@@ -704,6 +709,21 @@ def paper_delete(paper_id: str):
     if not _paper_manager.delete_paper(paper_id):
         raise HTTPException(status_code=404, detail="论文未找到")
     return {"status": "deleted", "paper_id": paper_id}
+
+
+@app.post("/api/paper/batch-delete")
+def paper_batch_delete(req: PaperBatchDeleteRequest):
+    """批量或全部删除论文。"""
+    if req.delete_all:
+        count = _paper_manager.delete_all_papers()
+        return {"status": "deleted", "count": count, "all": True}
+    if req.paper_ids:
+        deleted = []
+        for pid in req.paper_ids:
+            if _paper_manager.delete_paper(pid):
+                deleted.append(pid)
+        return {"status": "deleted", "deleted": deleted, "count": len(deleted)}
+    raise HTTPException(status_code=400, detail="请指定 paper_ids 或设置 delete_all=true")
 
 
 # ── Reading History API ────────────────────────────────────────────

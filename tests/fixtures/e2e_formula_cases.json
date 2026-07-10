@@ -1,0 +1,327 @@
+{
+  "meta": {
+    "version": "1.0",
+    "generated": "2026-07-09",
+    "source": "公式汇总.md",
+    "description": "End-to-end formula pipeline test dataset — 18 scenarios covering all pipeline stages from translation extraction through frontend rendering",
+    "total_scenarios": 18,
+    "pipeline_stages": [
+      "translation_extraction",
+      "formula_validation",
+      "merge_dollar_blocks",
+      "promote_display_math",
+      "sanitize_latex",
+      "fragment_filter",
+      "full_pipeline"
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "E2E-01",
+      "name": "翻译路径：简单展示公式提取",
+      "stage": "translation_extraction",
+      "input": {
+        "translation_text": "The UAV speed at time slot t is:\n\n$$v_t = \\frac{\\|U(t + 1) - U(t)\\|_2}{\\tau}$$\n\nThe flight distance within the i-th time slot is:\n\n$$l_{i,i+1} = \\|U(i + 1) - U(i)\\|_2$$\n\nThe flight speed constraint:\n\n$$l_{t,t+1} \\le v_{\\max} \\cdot \\tau, \\quad 1 \\le t \\le T - 1$$"
+      },
+      "expected": {
+        "min_formulas": 3,
+        "must_contain_latex": [
+          "v_t = \\frac{\\|U(t + 1) - U(t)\\|_2}{\\tau}",
+          "l_{i,i+1} = \\|U(i + 1) - U(i)\\|_2",
+          "l_{t,t+1} \\le v_{\\max} \\cdot \\tau"
+        ]
+      }
+    },
+    {
+      "id": "E2E-02",
+      "name": "翻译路径：cases 环境 + 中文 \\text{} 公式",
+      "stage": "translation_extraction",
+      "input": {
+        "translation_text": "The scheduling indicator is defined as:\n\n$$a_k(t) = \\begin{cases} 1, & \\text{节点在时隙 t 决定进行任务卸载}, \\\\ 0, & \\text{该节点等待在未来的时隙中进行传输}. \\end{cases}$$\n\nThe coverage constraint is:\n\n$$a_k(t) \\cdot d_k^2(t) \\le C^2$$"
+      },
+      "expected": {
+        "min_formulas": 2,
+        "must_contain_latex": [
+          "a_k(t) = \\begin{cases}",
+          "a_k(t) \\cdot d_k^2(t) \\le C^2"
+        ]
+      }
+    },
+    {
+      "id": "E2E-03",
+      "name": "翻译路径：多行 aligned 环境自动提升",
+      "stage": "promote_display_math",
+      "input": {
+        "translation_text": "The optimization problem is:\n\n$\\begin{aligned} \\mathbf{P1}: \\min & \\sum_{k=1}^{K} w_k \\bar{A}_k \\\\ \\text{s.t.} \\quad & l_{t,t+1} \\leq v_{\\max} \\cdot \\tau \\\\ & a_k(t) \\in \\{0, 1\\} \\end{aligned}$\n\nThe constraint set includes power and scheduling limits."
+      },
+      "expected": {
+        "min_formulas": 1,
+        "must_contain_latex": ["begin{aligned}"],
+        "must_contain_keywords": ["mathbf{P1}", "min", "s.t."]
+      }
+    },
+    {
+      "id": "E2E-04",
+      "name": "翻译路径：\\text{subject to} 不被英文黑名单误杀",
+      "stage": "translation_extraction",
+      "input": {
+        "translation_text": "The problem is:\n\n$$\\min_{x \\in \\mathcal{X}} f(x) \\quad \\text{subject to} \\quad g(x) \\leq 0$$\n\nAnd the condition:\n\n$$h(x) = 0 \\quad \\text{for all} \\quad x \\in \\mathcal{X}$$"
+      },
+      "expected": {
+        "min_formulas": 2,
+        "must_contain_latex": [
+          "\\min_{x \\in \\mathcal{X}} f(x)",
+          "h(x) = 0"
+        ]
+      }
+    },
+    {
+      "id": "E2E-05",
+      "name": "翻译路径：碎片 $...$ 合并 + 过滤",
+      "stage": "translation_extraction",
+      "input": {
+        "translation_text": "The parameter $\\varpi$ t = $\\frac{P}{N}$ $\\sum_{n=1}^{N}$ $D_U$ defines the weighted sum.\n\nAnother formula: $\\varphi_{t}^{n,m} = 1$ means communication is possible."
+      },
+      "expected": {
+        "min_formulas": 0,
+        "max_formulas": 0,
+        "must_not_contain_keywords": ["\\varpi t", "\\frac{P}{N}", "\\sum_{n=1}^{N}"]
+      }
+    },
+    {
+      "id": "E2E-06",
+      "name": "翻译路径：混合良莠内容仅提取好的",
+      "stage": "translation_extraction",
+      "input": {
+        "translation_text": "Channel model:\n\n$$g = \\frac{\\beta_0}{d^2}$$\n\nBad fragments: $\\varphi$ t n,m $=$ 1 means communication. $\\varpi$ t $=$ 0 otherwise.\n\nSINR:\n\n$$\\gamma = \\frac{P g}{\\sigma^2 + I}$$\n\nMore garbage: $\\leq$ R max is not a formula."
+      },
+      "expected": {
+        "min_formulas": 2,
+        "must_contain_latex": [
+          "g = \\frac{\\beta_0}{d^2}",
+          "\\gamma = \\frac{P g}{\\sigma^2 + I}"
+        ],
+        "must_not_contain_keywords": ["\\varphi t", "\\varpi t", "\\leq R max"]
+      }
+    },
+    {
+      "id": "E2E-07",
+      "name": "翻译路径：含 \\boldsymbol 的公式不损坏",
+      "stage": "translation_extraction",
+      "input": {
+        "translation_text": "The control vector is:\n\n$$\\boldsymbol{v}_m(t) = (v_m^s(t), \\varphi_m(t))$$\n\nThe bold notation uses \\boldsymbol for Greek letters."
+      },
+      "expected": {
+        "min_formulas": 1,
+        "must_contain_latex": ["\\boldsymbol{v}_m(t)"]
+      }
+    },
+    {
+      "id": "E2E-08",
+      "name": "验证器：\\frac \\sum \\int \\prod 全部通过",
+      "stage": "formula_validation",
+      "input": {
+        "formulas": [
+          "R_k(t) = a_k(t) \\cdot B \\cdot \\log_2 \\left( 1 + \\frac{p_k^{tr}(t) \\cdot h_k(t)}{\\sigma^2} \\right)",
+          "\\sum_{k=1}^{K} a_k(t) \\le Z",
+          "\\int_{0}^{T} P_{mov}(v_t) \\cdot \\tau \\, dt",
+          "\\prod_{i=1}^{N} \\Pr(\\text{success}_i)",
+          "\\sqrt{\\frac{(T_m^{\\mathrm{h}}(t))^2}{4 \\rho^2 A^2} + \\frac{(v_m^{\\mathrm{s}}(t))^4}{4}}",
+          "\\mathbb{E}\\left[ \\sum_{t=1}^{T} \\sum_{n=1}^{N} \\delta_n(t) \\right]",
+          "\\max_{x \\in \\mathcal{X}} \\min_{y \\in \\mathcal{Y}} f(x, y)",
+          "\\arg\\min_\\pi G^\\pi(s^{(\\tau)})",
+          "\\lim_{T \\to \\infty} \\frac{1}{T} \\sum_{t=1}^{T} a_k(t) p_k^{tr}(t) \\le \\bar{p}",
+          "\\sin(\\theta) \\cdot \\cos(\\phi) + \\tan(\\psi)",
+          "\\log_2(1 + \\text{SNR}) \\cdot \\ln(x)",
+          "\\det(\\mathbf{A}) \\cdot \\gcd(a, b)",
+          "E = mc^2",
+          "\\partial f / \\partial x = 0",
+          "\\nabla \\cdot \\mathbf{F} = \\frac{\\partial F_x}{\\partial x} + \\frac{\\partial F_y}{\\partial y}"
+        ]
+      },
+      "expected": {
+        "all_pass": true,
+        "max_rejected": 0
+      }
+    },
+    {
+      "id": "E2E-09",
+      "name": "验证器：核心运算符公式通过",
+      "stage": "formula_validation",
+      "input": {
+        "formulas": [
+          "a \\times b = c",
+          "x \\cdot y = z",
+          "\\alpha \\pm \\beta = \\gamma",
+          "A \\propto B^2",
+          "X \\sim \\mathcal{N}(0, 1)",
+          "\\hat{x} \\simeq y",
+          "a \\oplus b = b \\oplus a",
+          "x \\otimes y \\in \\mathbb{R}",
+          "f \\circ g (x)"
+        ]
+      },
+      "expected": {
+        "all_pass": true,
+        "max_rejected": 0
+      }
+    },
+    {
+      "id": "E2E-10",
+      "name": "验证器：空/垃圾/碎片拒绝",
+      "stage": "formula_validation",
+      "input": {
+        "formulas": [
+          "",
+          "x",
+          "=",
+          "the quick brown fox",
+          "\\varphi t n,m = 1",
+          "= \\emptyset",
+          "\\leq R max",
+          "\\varphi t n,mdt n,m n (1)",
+          "\\varpi t = P N n = 1 D U",
+          "x i 2 + y i 2",
+          "\\varphi = 1 表示通信",
+          "x + y の最適化",
+          "x $ y"
+        ]
+      },
+      "expected": {
+        "all_reject": true,
+        "max_accepted": 0
+      }
+    },
+    {
+      "id": "E2E-11",
+      "name": "验证器：下标/上标公式通过",
+      "stage": "formula_validation",
+      "input": {
+        "formulas": [
+          "x_i^2 + y_i^2",
+          "R_{i,j}^{A2A}(t) = B \\log_2(1 + \\gamma_{i,j})",
+          "\\varphi_{t}^{n,m} = 1",
+          "E_k^{comp}(t) = c \\cdot (f_k^{uav}(t))^\\alpha",
+          "a_{i,j}^{(k)} = x_i + y_j",
+          "g_{u,m}(n) = \\beta_0 d_{u,m}^{-2}",
+          "Q_k(t + 1) = (Q_k(t) + g_k(t)D_k(t) - a_k(t)m_k(t)D_k(t))^+"
+        ]
+      },
+      "expected": {
+        "all_pass": true,
+        "max_rejected": 0
+      }
+    },
+    {
+      "id": "E2E-12",
+      "name": "验证器：cases 环境公式通过",
+      "stage": "formula_validation",
+      "input": {
+        "formulas": [
+          "a_k(t) = \\begin{cases} 1, & \\text{若节点在时隙 t 决定进行任务卸载}, \\\\ 0, & \\text{否则}. \\end{cases}",
+          "\\delta_n(t + 1) = \\begin{cases} 1, & \\text{if } \\zeta_n(t) = 1 \\\\ \\min(\\delta_n(t) + 1, \\delta_{\\max}), & \\text{otherwise} \\end{cases}",
+          "m_k(t) = \\begin{cases} 1, & \\text{if } T_k^{off}(t) \\le \\tau \\\\ 0, & \\text{otherwise.} \\end{cases}"
+        ]
+      },
+      "expected": {
+        "all_pass": true,
+        "max_rejected": 0
+      }
+    },
+    {
+      "id": "E2E-13",
+      "name": "merge_dollar_blocks：破碎跨度合并",
+      "stage": "merge_dollar_blocks",
+      "input": {
+        "text": "$\\varpi$ U,t n $\\in$ $[0,1]$ and $\\varphi$ t $=$ $\\frac{a}{b}$"
+      },
+      "expected": {
+        "should_contain": ["$\\varpi U,t n \\in [0,1]$", "$\\varphi t = \\frac{a}{b}$"]
+      }
+    },
+    {
+      "id": "E2E-14",
+      "name": "sanitizeLatex：特殊字符转义",
+      "stage": "sanitize_latex",
+      "input": {
+        "calls": [
+          {"latex": "x = y & z", "expected": "x = y \\& z"},
+          {"latex": "p < 0.05%", "expected": "p < 0.05\\%"},
+          {"latex": "Section #3", "expected": "Section \\#3"},
+          {"latex": "a ~ b", "expected": "a \\textasciitilde{} b"},
+          {"latex": "already \\& escaped", "expected": "already \\& escaped"}
+        ]
+      }
+    },
+    {
+      "id": "E2E-15",
+      "name": "片段过滤：短字母卡片被移除",
+      "stage": "fragment_filter",
+      "input": {
+        "html": "<div class=\"frow\"><div class=\"fnum\">1</div><div class=\"fbody\"><div class=\"fexpr\">\\frac{a}{b}</div><div class=\"fmean\">Fraction</div></div></div><div class=\"frow\"><div class=\"fnum\">2</div><div class=\"fbody\"><div class=\"fexpr\">x</div><div class=\"fmean\">Just x</div></div></div><div class=\"frow\"><div class=\"fnum\">3</div><div class=\"fbody\"><div class=\"fexpr\">t n</div><div class=\"fmean\">Garbage</div></div></div>"
+      },
+      "expected": {
+        "kept_cards": 1,
+        "removed_cards": 2,
+        "must_contain": ["\\frac{a}{b}"],
+        "must_not_contain_fexpr": ["x", "t n"]
+      }
+    },
+    {
+      "id": "E2E-16",
+      "name": "全管道集成：代表性论文翻译→提取",
+      "stage": "full_pipeline",
+      "input": {
+        "papers": [
+          {
+            "paper_id": 1,
+            "name": "Age-of-Task-Aware AAV",
+            "translation_chunk": "## System Model\n\nThe UAV speed at time slot $t$ is defined as:\n\n$$v_t = \\frac{\\|U(t + 1) - U(t)\\|_2}{\\tau}$$\n\nThe flight distance within the $i$-th time slot is:\n\n$$l_{i,i+1} = \\|U(i + 1) - U(i)\\|_2$$\n\nThe flight speed constraint is given by:\n\n$$l_{t,t+1} \\le v_{\\max} \\cdot \\tau, \\quad 1 \\le t \\le T - 1$$\n\n## Communication Model\n\nThe information transmission rate is:\n\n$$R_k(t) = a_k(t) \\cdot B \\cdot \\log_2 \\left( 1 + \\frac{p_k^{tr}(t) \\cdot h_k(t)}{\\sigma^2} \\right)$$\n\nwhere $h_k(t) = h_0 \\cdot (d_k^2(t) + H^2)^{-1}$.\n\nThe scheduling indicator is:\n\n$$a_k(t) = \\begin{cases} 1, & \\text{the node decides to offload at slot } t, \\\\ 0, & \\text{the node waits for future transmission}. \\end{cases}$$\n\nThe average transmit power constraint:\n\n$$\\lim_{T \\to \\infty} \\frac{1}{T} \\sum_{t=1}^{T} (a_k(t) \\cdot p_k^{tr}(t)) \\le \\bar{p}$$",
+            "min_expected_formulas": 6,
+            "must_match": ["v_t", "l_{i,i+1}", "R_k(t)", "a_k(t)", "sum"]
+          },
+          {
+            "paper_id": 3,
+            "name": "Aerial-Marine Integrated Networks",
+            "translation_chunk": "## Communication Model\n\nThe server selection decision is:\n\n$$s_i^m = \\begin{cases} 1, & \\text{UAV } i \\text{ selects server } m \\text{ at slot } t \\text{ to process tasks} \\\\ 0, & \\text{otherwise} \\end{cases}$$\n\nThe large-scale path loss (UAV-MASS):\n\n$$L_i^M|_{\\text{dB}} = L_0 + 10\\lambda \\log_{10} \\left( \\frac{d_i^m}{d_0} \\right) + X_\\sigma + \\varrho F$$\n\nThe small-scale Rician fading:\n\n$$\\tilde{u}_i^m = \\sqrt{\\frac{K_R}{1+K_R}} + \\sqrt{\\frac{1}{1+K_R}} g_i^m, \\quad g_i^m \\sim \\mathcal{CN}(0, 1)$$\n\nThe channel coefficient is $h_i^m = (L_i^M)^{-1/2} \\tilde{u}_i^m$ and the channel gain is $H_i^m = G_U G_M |h_i^m|^2$.\n\nThe Shannon capacity:\n\n$$R_i^m = s_i^m W_i^m \\log_2 \\left( 1 + \\frac{p_i H_i^m}{\\sigma^2} \\right)$$\n\n## Computation Model\n\nThe local computation delay is $t_i^{\\text{loc}} = \\frac{a_i D \\alpha}{\\rho_i}$.",
+            "min_expected_formulas": 5,
+            "must_match": ["s_i^m", "L_i^M", "tilde", "R_i^m"]
+          }
+        ]
+      },
+      "expected": {
+        "paper_1_min_formulas": 6,
+        "paper_3_min_formulas": 5
+      }
+    },
+    {
+      "id": "E2E-17",
+      "name": "Σ 求和运算符映射修复",
+      "stage": "formula_validation",
+      "input": {
+        "formulas": [
+          "\\sum_{k=1}^{K} w_k A_k(t)",
+          "\\sum_{i=1}^{n} x_i^2",
+          "\\Sigma_{i,j} = \\text{Cov}(X_i, X_j)"
+        ]
+      },
+      "expected": {
+        "all_pass": true,
+        "max_rejected": 0
+      }
+    },
+    {
+      "id": "E2E-18",
+      "name": "完整优化问题公式（最复杂场景）",
+      "stage": "translation_extraction",
+      "input": {
+        "translation_text": "The complete optimization problem is formulated as:\n\n$$\\begin{aligned} \\mathbf{P1}: \\min_{\\mathbf{Z}=\\{\\mathbf{s}, \\mathbf{p}, \\mathbf{\\beta}, \\mathbf{\\rho}\\}} \\quad & \\mathcal{G} = \\sum_{i \\in \\mathcal{I}} G_i \\\\ \\text{s.t.} \\quad & 0 \\leq a_i \\leq a^{\\max}, \\quad \\forall i \\in \\mathcal{I}, \\\\ & s_i^m \\in \\{0, 1\\}, \\quad \\forall i \\in \\mathcal{I}, \\; \\forall m \\in \\mathcal{M}, \\\\ & \\sum_{m=0}^{M} s_i^m \\leq 1, \\quad \\forall i \\in \\mathcal{I}, \\\\ & 0 \\leq p_i \\leq p_i^{\\max}, \\quad \\forall i \\in \\mathcal{I}, \\\\ & 0 \\leq \\rho_i \\leq \\rho_i^{\\max}, \\quad \\forall i \\in \\mathcal{I}, \\\\ & 0 \\leq \\beta_i^m \\leq 1, \\quad \\forall i \\in \\mathcal{I}, \\quad \\forall m \\in \\mathcal{M}, \\\\ & \\sum_{i \\in \\Lambda_m} \\beta_i^m \\leq 1, \\quad \\forall m \\in \\mathcal{M}, \\\\ & t_i^{loc} \\leq T_i^{th}, \\quad \\forall i \\in \\mathcal{I}, \\\\ & t_i^{edge} \\leq T_i^{th}, \\quad \\forall i \\in \\mathcal{I}. \\end{aligned}$$\n\nwhere $G_i = \\mu_i^t T_i + \\mu_i^e E_i$ with $\\mu_i^t + \\mu_i^e = 1$."
+      },
+      "expected": {
+        "min_formulas": 1,
+        "must_contain_latex": ["\\begin{aligned}"],
+        "must_contain_keywords": ["mathbf{P1}", "mathcal{G}", "sum", "forall", "leq"]
+      }
+    }
+  ]
+}

@@ -88,6 +88,10 @@ async def translate_paper(
 
     result = "\n\n".join(translated_chunks)
     result = _validate_formulas(result)
+    result = _merge_formula_fragments(result)
+    # Strip control characters (except tab, LF, CR) that break MathJax rendering.
+    # NUL and SOH bytes are common PDF extraction artifacts embedded in math blocks.
+    result = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", result)
     if figures or tables:
         result = _embed_figures_tables(result, figures or [], tables or [], paper_id)
     result = _validate_translation_length(result, input_len)
@@ -151,6 +155,22 @@ def _build_chunks(paragraphs: list[str], max_size: int) -> list[tuple[str, str]]
             cur_size += ps
     if current:
         raw_chunks.append("\n\n".join(current))
+
+    # Post-process: merge chunks that split a $$...$$ formula block.
+    # An odd number of $$ delimiters in a chunk means an unclosed display
+    # math block — the formula would be split across the chunk boundary.
+    merged: list[str] = []
+    i = 0
+    while i < len(raw_chunks):
+        chunk = raw_chunks[i]
+        dd_count = chunk.count("$$")
+        if dd_count % 2 == 1 and i + 1 < len(raw_chunks):
+            chunk = chunk + "\n\n" + raw_chunks[i + 1]
+            i += 2
+        else:
+            i += 1
+        merged.append(chunk)
+    raw_chunks = merged
 
     # Build overlap pairs: chunk N gets last paragraph of chunk N-1 as context
     result: list[tuple[str, str]] = [(raw_chunks[0], "")]
@@ -235,13 +255,152 @@ def _balance_latex_braces(latex: str) -> str:
     return ''.join(chars)
 
 
+def _merge_formula_fragments(text: str) -> str:
+    """Post-translation: merge fragmented $...$ blocks into coherent formulas.
+
+    Three passes:
+      1. Merge adjacent $...$ blocks (gap ≤ 35, no sentence breaks)
+      2. Promote display-like $...$ to $$...$$
+      3. Fix subscript/superscript brace wrapping
+    """
+    if not text or "$" not in text:
+        return text
+
+    D = "$"
+
+    # ── Pass 1: Iteratively merge adjacent $...$ blocks ──────────────
+    def _should_merge_gap(gap: str) -> bool:
+        """Check if the text between two $...$ blocks is math-like, not prose."""
+        gap = gap.strip()
+        if not gap:
+            return True
+        if len(gap) > 35:
+            return False
+        # Sentence-ending punctuation → hard boundary
+        if re.search(r"[.。!！?？;:；:]", gap):
+            return False
+        # CJK characters → explanatory prose
+        if re.search(r"[一-鿿㐀-䶿぀-ゟ가-힯]", gap):
+            return False
+        # 5+ space-separated English words → prose sentence
+        words = gap.split()
+        alpha_words = [w for w in words if re.search(r"[a-zA-Z]{3,}", w)]
+        if len(alpha_words) >= 3 and len(words) >= 5:
+            return False
+        return True
+
+    def _find_dollar_blocks(t: str) -> list:
+        """Find all $...$ (inline) blocks in text. Returns [(start, end, inner), ...]."""
+        blocks = []
+        i = 0
+        while i < len(t):
+            if t[i] == "\\" and i + 1 < len(t) and t[i + 1] == "$":
+                i += 2  # skip escaped \$
+                continue
+            if t[i:i + 2] == "$$":
+                # Skip existing display math blocks
+                end = t.find("$$", i + 2)
+                i = end + 2 if end >= 0 else i + 2
+                continue
+            if t[i] == "$":
+                j = i + 1
+                while j < len(t):
+                    if t[j] == "\\" and j + 1 < len(t) and t[j + 1] == "$":
+                        j += 2
+                        continue
+                    if t[j] == "$" and (j + 1 >= len(t) or t[j + 1] != "$"):
+                        blocks.append((i, j + 1, t[i + 1:j]))
+                        break
+                    j += 1
+                i = j + 1 if j < len(t) else i + 1
+            else:
+                i += 1
+        return blocks
+
+    prev = None
+    result = text
+    while prev != result:
+        prev = result
+        blocks = _find_dollar_blocks(result)
+        if len(blocks) < 2:
+            break
+        parts = []
+        last_end = 0
+        i = 0
+        while i < len(blocks):
+            start_i, end_i, inner_i = blocks[i]
+            parts.append(result[last_end:start_i])
+            if i + 1 < len(blocks):
+                start_j, end_j, inner_j = blocks[i + 1]
+                gap = result[end_i:start_j]
+                if _should_merge_gap(gap):
+                    merged_inner = inner_i + " " + result[end_i:start_j].strip() + " " + inner_j
+                    merged_inner = " ".join(merged_inner.split())  # normalize whitespace
+                    parts.append(D + merged_inner + D)
+                    last_end = end_j
+                    i += 2
+                    continue
+            parts.append(result[start_i:end_i])
+            last_end = end_i
+            i += 1
+        parts.append(result[last_end:])
+        result = "".join(parts)
+
+    # ── Pass 2: Promote display-like $...$ to $$...$$ ────────────────
+    def _should_promote(inner: str, after_text: str) -> bool:
+        if re.search(
+            r"\\(?:frac|dfrac|tfrac|sum|prod|int|iint|iiint|oint|sqrt|begin|lim|max|min|argmin|argmax|sup|inf|det|gcd|lcm)\b",
+            inner,
+        ):
+            return True
+        if "=" in inner and len(inner) > 50:
+            return True
+        if re.match(r"^\s*\(\d+[a-z]?\)", after_text):
+            return True
+        return False
+
+    blocks2 = _find_dollar_blocks(result)
+    if blocks2:
+        parts2 = []
+        last_end2 = 0
+        for start_i, end_i, inner_i in blocks2:
+            parts2.append(result[last_end2:start_i])
+            after = result[end_i:end_i + 20] if end_i < len(result) else ""
+            if _should_promote(inner_i, after):
+                parts2.append("\n\n$$" + inner_i.strip() + "$$\n\n")
+            else:
+                parts2.append(D + inner_i + D)
+            last_end2 = end_i
+        parts2.append(result[last_end2:])
+        result = "".join(parts2)
+
+    # ── Pass 3: Fix multi-char subscript/superscript braces ─────────
+    def _fix_sub_sup_braces(m: re.Match) -> str:
+        sep = "$$" if m.group(0).startswith("$$") else "$"
+        inner = m.group(1) if m.lastindex else m.group(0)[len(sep):-len(sep)]
+        # Strip control characters that break MathJax (NUL, SOH, etc.)
+        inner = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", inner)
+        # Escape TeX special characters that break MathJax rendering
+        inner = inner.replace("#", r"\#").replace("%", r"\%")
+        inner = re.sub(r"(?<!\\)~(?!textasciitilde)", r"\\textasciitilde{}", inner)
+        # _X or _XY... → _{X} or _{XY...}
+        inner = re.sub(r"(?<!\\)_([a-zA-Z][a-zA-Z0-9,.]{0,10})(?![\w{])", r"_{\1}", inner)
+        # ^X or ^XY... → ^{X} or ^{XY...}
+        inner = re.sub(r"(?<!\\)\^([a-zA-Z][a-zA-Z0-9,.]{0,10})(?![\w{])", r"^{\1}", inner)
+        return sep + inner + sep
+
+    result = re.sub(r"\$\$(.+?)\$\$", _fix_sub_sup_braces, result, flags=re.DOTALL)
+    result = re.sub(r"(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)", _fix_sub_sup_braces, result)
+    return result
+
+
 def _validate_formulas(translated: str) -> str:
     """修复常见 LaTeX 语法错误，平衡括号，检测未闭合公式块。"""
     if not translated:
         return translated
     fixed = translated
     # Fix 1: Missing backslash before math commands embedded in text
-    fixed = re.sub(r"(?<![\\a-zA-Z])(mathbf|mathcal|mathbb|mathit|mathrm)\{", r"\\\1{", fixed)
+    fixed = re.sub(r"(?<![\\a-zA-Z])(mathbf|mathcal|mathbb|mathit|mathrm|boldsymbol)\{", r"\\\1{", fixed)
     # Fix 3: Unescaped _ and ^ outside $...$ (convert to LaTeX subscript/superscript)
     # Only fix within formula blocks (between $...$ or $$...$$)
     # Fix 4: Multi-char subscripts inside $...$ — ensure braces via callback

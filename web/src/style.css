@@ -471,6 +471,43 @@ mjx-container[data-mjx-error]::before { content: "⚠ "; font-size: 11px }
 .pi:hover, .ri:hover { background: rgba(99, 102, 241, 0.08); border-color: var(--c-border-active); box-shadow: var(--glow-sm); transform: translateX(2px) }
 .pi strong, .ri strong { font-family: var(--ff-heading); font-size: 14px; display: block; color: #fff }
 .pmeta { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; margin-top: var(--s-1); font-size: 11px; color: var(--c-text-secondary) }
+/* Selection circles */
+.sel-circle {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid rgba(99, 102, 241, 0.22);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; flex-shrink: 0; transition: all var(--t-fast);
+  background: transparent; margin-right: var(--s-3);
+}
+.sel-circle:hover { border-color: var(--c-accent); box-shadow: 0 0 10px rgba(99, 102, 241, 0.25) }
+.sel-circle.on {
+  background: linear-gradient(135deg, var(--c-accent), var(--c-accent-2));
+  border-color: transparent;
+  box-shadow: 0 0 14px var(--c-accent-glow);
+}
+.sel-circle.on::after {
+  content: '';
+  width: 5px; height: 9px;
+  border: 2px solid #fff;
+  border-top: none; border-left: none;
+  transform: rotate(45deg);
+  margin-top: -1px;
+}
+.pi.sel {
+  border-color: rgba(99, 102, 241, 0.38);
+  background: rgba(99, 102, 241, 0.05);
+  box-shadow: 0 0 18px rgba(99, 102, 241, 0.1);
+}
+.btn-del-sel {
+  background: rgba(245, 158, 11, 0.15); color: var(--c-warn);
+  border-color: rgba(245, 158, 11, 0.3); font-weight: 600;
+}
+.btn-del-sel:hover { background: rgba(245, 158, 11, 0.25); box-shadow: 0 0 14px rgba(245, 158, 11, 0.2) }
+.btn-del-all {
+  background: transparent; color: var(--c-danger);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+.btn-del-all:hover { background: rgba(239, 68, 68, 0.1); box-shadow: 0 0 14px rgba(239, 68, 68, 0.15) }
 
 /* Chat */
 .chat-container { display: flex; flex-direction: column; height: calc(100vh - 180px); max-width: 860px; margin: 0 auto; width: 100% }
@@ -576,6 +613,24 @@ pre { font-size: 12px; background: var(--c-bg-input); color: var(--c-text); padd
 .fml-pop-card { background:var(--c-bg-secondary); border:1px solid var(--c-border-active); border-radius:var(--r-lg); padding:var(--s-4); box-shadow:0 8px 32px rgba(0,0,0,0.4),var(--glow-md); position:relative }
 .fml-pop-close { position:absolute; top:8px; right:10px; cursor:pointer; color:var(--c-text-muted); font-size:18px; line-height:1 }
 .fml-pop-close:hover { color:var(--c-text) }
+
+/* ── Formula Explanation Cards ── */
+.sec-title { font-size: 13px; font-weight: 500; color: var(--c-text-secondary); letter-spacing: .04em; padding: 1.5rem 0 .5rem; border-top: .5px solid var(--c-border); margin-top: .5rem; }
+.sec-title:first-of-type { border-top: none; padding-top: .5rem; }
+.frow { display: grid; grid-template-columns: 56px 1fr; gap: 0; border: .5px solid var(--c-border); border-radius: var(--r-md); margin-bottom: 8px; overflow: hidden; background: var(--c-bg-card); }
+.frow:hover { border-color: var(--c-border-active); }
+.fnum { display: flex; align-items: center; justify-content: center; background: var(--c-bg-secondary); font-size: 12px; font-weight: 500; color: var(--c-text-secondary); border-right: .5px solid var(--c-border); padding: 10px 6px; min-height: 52px; }
+.fbody { padding: 10px 14px; }
+.ftag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; margin-bottom: 5px; }
+.tag-sys { background: #E6F1FB; color: #0C447C; }
+.tag-mdp { background: #EEEDFE; color: #3C3489; }
+.tag-alg { background: #FAEEDA; color: #633806; }
+.tag-rwd { background: #FAECE7; color: #712B13; }
+.tag-gat { background: #E1F5EE; color: #085041; }
+.tag-obs { background: #FBEAF0; color: #72243E; }
+.fexpr { font-family: var(--ff-mono); font-size: 12px; color: var(--c-text-secondary); margin-bottom: 4px; opacity: .85; }
+.fmean { font-size: 13px; color: var(--c-text); line-height: 1.55; }
+.fmean b { font-weight: 500; }
 
 /* ── Research Trends ── */
 .trend-heatmap svg, .trend-line svg { display:block; background:var(--c-bg-input); border-radius:var(--r-md); border:1px solid var(--c-border) }

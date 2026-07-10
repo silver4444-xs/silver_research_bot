@@ -86,10 +86,14 @@ class PaperOrchestrator:
         # ─── Stage 1a: Translate (en only) ───
         if lang == "en":
             from silver_research_bot.paper_analyzer.translator import translate_paper
+            from silver_research_bot.utils.langsmith_utils import trace_pipeline_stage
 
             self._write_progress(paper_dir, "translate", "running", "正在翻译全文（公式→LaTeX）…")
             _mark(plan, "translate", "running")
-            translation = await translate_paper(full_text, self.provider, self.model, figures=figures, tables=tables, paper_id=meta_dict["paper_id"])
+            with trace_pipeline_stage("translate", paper_id=meta_dict["paper_id"]) as tr_run:
+                translation = await translate_paper(full_text, self.provider, self.model, figures=figures, tables=tables, paper_id=meta_dict["paper_id"])
+                if tr_run is not None:
+                    tr_run.outputs = {"chars": len(translation), "paper_id": meta_dict["paper_id"]}
             (paper_dir / "translation.md").write_text(translation, encoding="utf-8")
             analysis.translation = translation
             artifacts.append({
@@ -146,7 +150,22 @@ class PaperOrchestrator:
             "kind": "formula_explanations",
         })
         _mark(plan, "formula_explain", "completed")
-        self._write_progress(paper_dir, "formula_explain", "completed", "公式解读完成")
+        # Cross-validation: compare PDF formula count vs cards in explanation output
+        pdf_fm_count = len(formulas)
+        card_count = formulas_text.count('<div class="frow">')
+        if pdf_fm_count > 0 and card_count > 0:
+            ratio = card_count / pdf_fm_count
+            if ratio < 0.5:
+                self._write_progress(paper_dir, "formula_explain", "completed",
+                    f"公式解读完成 ({card_count}张卡片 vs PDF中{pdf_fm_count}个公式 — 可能丢失公式)")
+            elif ratio > 2.0:
+                self._write_progress(paper_dir, "formula_explain", "completed",
+                    f"公式解读完成 ({card_count}张卡片 vs PDF中{pdf_fm_count}个碎片 — LLM重建了更多完整公式)")
+            else:
+                self._write_progress(paper_dir, "formula_explain", "completed",
+                    f"公式解读完成 ({card_count}张卡片)")
+        else:
+            self._write_progress(paper_dir, "formula_explain", "completed", "公式解读完成")
 
         # ─── Stage 3: Visualization ───
         from silver_research_bot.paper_analyzer.visualizer import generate_visualization

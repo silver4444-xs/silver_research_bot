@@ -223,7 +223,7 @@ async function pollProgress(){
     }
   }catch(e){progressMsg.value='轮询失败: '+e.message;console.error('pollProgress',e)}}
 function retypeset(){if(window.MathJax)MathJax.typesetPromise();if(window.mermaid)try{mermaid.run({querySelector:'.mermaid'})}catch(e){}}function renderAll(t){let h=renderMd(t);setTimeout(retypeset,100);return h}
-function sanitizeLatex(s){return s.replace(/#/g,'\\#').replace(/%/g,'\\%').replace(/~/g,'\\textasciitilde{}').replace(/[“”]/g,'"').replace(/[‘’]/g,"'").replace(/ /g,' ')}
+function sanitizeLatex(s){return s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,"").replace(/#/g,'\\#').replace(/%/g,'\\%').replace(/~/g,'\\textasciitilde{}').replace(/[“”]/g,'"').replace(/[‘’]/g,"'").replace(/ /g,' ')}
 function renderFormula(t){if(!t)return'';if(t.indexOf('<div class="frow"')>-1||t.indexOf('<style>')>-1){
   // Sanitize LaTeX special chars
   t=t.replace(/(<div class="fexpr">)([\s\S]*?)(<\/div>)/g,function(_,o,c,e){c=sanitizeLatex(c);if(/^\s*\$/.test(c))return o+c+e;c=c.replace(/^\s+|\s+$/g,'');return o+'$$'+c+'$$'+e})

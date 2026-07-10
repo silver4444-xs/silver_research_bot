@@ -603,12 +603,37 @@ class LLMProvider(ABC):
         调用 self.chat，捕获所有非 CancelledError 异常，返回一个 finish_reason="error" 的 LLMResponse，内容为错误信息。
         确保上层重试逻辑总是得到 LLMResponse 对象，不会因未捕获异常而崩溃。
         """
-        try:
-            return await self.chat(**kwargs)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            return LLMResponse(content=f"Error calling LLM: {exc}", finish_reason="error")
+        from silver_research_bot.utils.langsmith_utils import trace_llm_call
+
+        model = kwargs.get("model", "") or ""
+        messages = kwargs.get("messages", [])
+        tools = kwargs.get("tools") or []
+        with trace_llm_call(
+            model=model,
+            provider=type(self).__name__,
+            messages_count=len(messages),
+            tools_count=len(tools),
+        ) as run:
+            try:
+                response = await self.chat(**kwargs)
+                if run is not None:
+                    run.outputs = {
+                        "finish_reason": response.finish_reason,
+                        "content_preview": (response.content or "")[:200],
+                        "tool_calls_count": len(response.tool_calls) if response.tool_calls else 0,
+                    }
+                    if response.usage:
+                        run.metadata["usage"] = response.usage
+                    run.metadata["finish_reason"] = response.finish_reason
+                return response
+            except asyncio.CancelledError:
+                if run is not None:
+                    run.metadata["cancelled"] = True
+                raise
+            except Exception as exc:
+                if run is not None:
+                    run.metadata["error"] = str(exc)[:200]
+                return LLMResponse(content=f"Error calling LLM: {exc}", finish_reason="error")
 
     async def chat_stream(
         self,

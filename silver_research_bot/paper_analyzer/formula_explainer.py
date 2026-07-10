@@ -43,13 +43,29 @@ def _strip_fragment_cards(html: str) -> str:
         c = c.strip()
         if not c:
             return True
+        # Placeholder artifacts from PDF processing
+        if "◈" in c:
+            return True
+        # LaTeX commands → structured math
         if "\\" in c:
             return False
+        # Math operators, sub/superscript → structured math
         if re.search(r'[_^=+<>≤≥≠≈≡∈⊂⊆∪∩∫∑∏∇∂]', c):
             return False
-        alpha_only = re.sub(r'[\s,.;:()\[\]{}|]', '', c)
+        # Strip notation chars to isolate alphabetic content
+        alpha_only = re.sub(r'[\s,.;:()\[\]{}|0-9+\-*/×⋅±]', '', c)
+        # Pure numeric, empty, or single letter → not a formula
+        if not alpha_only or len(alpha_only) <= 1:
+            return True
+        # Short alpha-only (≤3 chars, no operators) → variable name fragment
         if len(alpha_only) <= 3 and re.match(r'^[a-zA-Z]+$', alpha_only):
             return True
+        # 3+ English words without math notation → prose, not a formula
+        words = c.split()
+        if len(words) >= 3:
+            alpha_words = [w for w in words if re.match(r'^[a-zA-Z]{2,}$', w)]
+            if len(alpha_words) >= 3:
+                return True
         return False
     result, parts = [], re.split(r'(<div class="frow">)', html)
     i = 0
@@ -85,9 +101,90 @@ def _wrap_html(body: str) -> str:
     body = re.sub(r'^```html?\s*\n?', '', body.strip())
     body = re.sub(r'\n?```\s*$', '', body)
     body = _strip_fragment_cards(body)
+    body = _balance_fmean_braces(body)
+    body = _balance_fexpr_braces(body)
     if '<style>' not in body: body = FORMULA_CSS + '\n' + body
     if '<h2 class="sr-only"' not in body: body = '<h2 class="sr-only">论文公式逐条解析</h2>\n' + body
     return body
+
+
+def _balance_fmean_braces(html: str) -> str:
+    """Balance braces inside $...$ math within .fmean divs.
+
+    Also escapes unmatched $ signs that would cause MathJax to treat
+    subsequent prose as math, leading to "Extra close brace" errors.
+    """
+    import re
+
+    def _fix_fmean(m: re.Match) -> str:
+        prefix, body, suffix = m.group(1), m.group(2), m.group(3)
+
+        # Step 0: Escape unmatched $ signs that would break MathJax.
+        # An unmatched opening $ causes everything after it to be parsed
+        # as LaTeX math, and any } in prose triggers "Extra close brace".
+        body = _escape_unmatched_dollars(body)
+
+        def _fix_dollar(dm: re.Match) -> str:
+            content = dm.group(1)
+            balanced = _balance_braces(content)
+            return "$" + balanced + "$"
+
+        body = re.sub(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)", _fix_dollar, body)
+        return prefix + body + suffix
+
+    return re.sub(
+        r"(<div class=\"fmean\">)([\s\S]*?)(</div>)",
+        _fix_fmean,
+        html,
+    )
+
+
+def _escape_unmatched_dollars(text: str) -> str:
+    """Ensure $ signs form valid pairs to prevent MathJax errors.
+
+    Unmatched $ delimiters cause MathJax to treat subsequent prose as math,
+    turning innocent braces into "Extra close brace or missing open brace" errors.
+
+    Strategy: single $ count (ignoring $$ pairs) must be even. If odd,
+    escape the last single $ that isn't part of a $$ block.
+    """
+    # Count single $ by removing valid $$ pairs first
+    cleaned = text.replace('$$', '')
+    single_count = cleaned.count('$')
+    if single_count % 2 == 0:
+        return text
+
+    # Odd count: find the rightmost single $ (not part of $$) and escape it
+    i = len(text) - 1
+    while i >= 0:
+        if text[i] == '$':
+            # Check if this $ is part of a $$ pair
+            if i + 1 < len(text) and text[i + 1] == '$':
+                i -= 2  # Skip $$ pair
+                continue
+            if i > 0 and text[i - 1] == '$':
+                i -= 2  # Skip $$ pair
+                continue
+            # Found a single $ — escape it
+            return text[:i] + '\\$' + text[i + 1:]
+        i -= 1
+    return text
+
+
+def _balance_fexpr_braces(html: str) -> str:
+    """Balance braces directly in .fexpr divs (pure LaTeX, no $...$ wrapping)."""
+    import re
+
+    def _fix_fexpr(m: re.Match) -> str:
+        prefix, latex, suffix = m.group(1), m.group(2), m.group(3)
+        balanced = _balance_braces(latex.strip())
+        return prefix + balanced + suffix
+
+    return re.sub(
+        r"(<div class=\"fexpr\">)([\s\S]*?)(</div>)",
+        _fix_fexpr,
+        html,
+    )
 
 
 def _balance_braces(latex: str) -> str:
@@ -142,6 +239,12 @@ def _promote_display_math(text: str) -> str:
         if '\\' not in inner:
             if len(_re.findall(r'[a-zA-Z]{2,}', inner)) >= 5:
                 return m.group(0)
+        # Content-based promotion: structural LaTeX commands → always display math
+        if _re.search(r'\\(?:frac|dfrac|tfrac|sum|prod|int|iint|iiint|oint|sqrt|begin|lim|max|min|argmin|argmax|sup|inf|det|gcd|lcm)\b', inner):
+            return "$$" + inner + "$$"
+        # Long formulas → display math
+        if len(inner) > 80:
+            return "$$" + inner + "$$"
         # Standalone on its own line → display math
         ls = text.rfind("\n", 0, start) + 1; le = text.find("\n", end_pos)
         if le == -1: le = len(text)
@@ -149,6 +252,12 @@ def _promote_display_math(text: str) -> str:
         # Followed by equation number (N) → display math
         after = text[end_pos:end_pos + 10].strip()
         if _re.match(r"^\(\d+[a-z]?\)", after): return "$$" + inner + "$$"
+        # Contains alignment/multi-line environments → display math
+        if _re.search(r'\\begin\{(?:aligned|align|gather|array|cases|split)', inner):
+            return "$$" + inner + "$$"
+        # Contains LaTeX line breaks (\\\\) → display math
+        if '\\\\' in inner:
+            return "$$" + inner + "$$"
         return m.group(0)
     return _re.sub(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)", _replace, text)
 
@@ -207,8 +316,10 @@ def extract_formulas_from_translation(translation_text: str) -> list[dict]:
         latex = block["latex"]
         if not latex or len(latex) < 5: continue
         if "◈" in latex: continue
-        # Reject formulas containing CJK characters — explanatory prose contamination
-        if _re.search(r'[一-鿿㐀-䶿豈-﫿぀-ゟ゠-ヿ가-힯]', latex): continue
+        # Reject formulas containing CJK characters — explanatory prose contamination.
+        # Strip \text{...} first — CJK inside LaTeX \text{} commands is legitimate.
+        _cjk_check = _re.sub(r'\\text\{[^}]*\}', '', latex)
+        if _re.search(r'[一-鿿㐀-䶿豈-﫿぀-ゟ゠-ヿ가-힯]', _cjk_check): continue
         # Gate through unified validator (same as PDF extraction path)
         if not _is_valid_formula(latex): continue
         eq_num = None
@@ -243,6 +354,58 @@ def extract_formulas_from_translation(translation_text: str) -> list[dict]:
     return formulas
 
 
+async def extract_formulas_from_raw_text(
+    full_text: str, provider: "LLMProvider", model: str
+) -> list[dict]:
+    """LLM extracts and normalizes complete $$...$$ formulas from raw paper text.
+
+    Used for non-English papers that skip translation — the LLM reconstructs
+    complete formulas from PDF fragments, fixing subscript/superscript artifacts
+    just like the translation path does for English papers.
+    """
+    sp = render_template("paper/formula_extractor.md", strip=True)
+    chunk_size, overlap = 8000, 500
+    all_formulas: list[dict] = []
+    seen_latex: set[str] = set()
+    idx = 0
+
+    st = 0
+    while st < len(full_text):
+        chunk = full_text[st:st + chunk_size]
+        um = f"从以下论文章节提取所有完整的数学公式（$$...$$ 格式）：\n\n{chunk}"
+        try:
+            r = await provider.chat_with_retry(
+                model=model,
+                messages=[{"role": "system", "content": sp}, {"role": "user", "content": um}],
+                tools=None,
+            )
+            if r.content:
+                for m in _re.finditer(r"\$\$(.+?)\$\$", r.content, _re.DOTALL):
+                    latex = m.group(1).strip()
+                    if len(latex) < 5:
+                        continue
+                    if "◈" in latex:
+                        continue
+                    norm = _re.sub(r'\s+', ' ', latex).strip()
+                    if norm in seen_latex:
+                        continue
+                    seen_latex.add(norm)
+                    if not _is_valid_formula(latex):
+                        continue
+                    idx += 1
+                    all_formulas.append({
+                        "index": idx, "latex": latex,
+                        "equation_number": None, "context": chunk[:200],
+                    })
+        except Exception:
+            pass
+        st += chunk_size - overlap
+        if st >= len(full_text):
+            break
+
+    return all_formulas
+
+
 async def explain_formulas(
     formulas: list[dict], full_text: str, provider: "LLMProvider", model: str,
     batch_size: int = 8, translation_text: str | None = None,
@@ -250,10 +413,15 @@ async def explain_formulas(
     if translation_text:
         tf = extract_formulas_from_translation(translation_text)
         if tf: return await _explain_translation_formulas(tf, full_text, provider, model, batch_size)
-        # Translation exists but no display formulas extracted → translation is authoritative
-        return _wrap_html('<p class="sec-title">公式检测结果</p><div class="frow"><div class="fnum">!</div><div class="fbody"><div class="fmean">翻译中未检测到展示公式（$$...$$），或所有公式均被过滤。建议检查翻译产物中公式的质量。</div></div>')
-    if not formulas: return _wrap_html(await _explain_from_text(full_text, provider, model))
-    # Defense-in-depth: filter garbage formulas from extracted.json before LLM processing
+        return _wrap_html("""<p class="sec-title">公式检测结果</p><div class="frow"><div class="fnum">!</div><div class="fbody"><div class="fmean">翻译中未检测到展示公式（$$...$$），或所有公式均被过滤。建议检查翻译产物中公式的质量。</div></div>""")
+    # Non-English papers: use LLM to extract normalized formulas from raw text,
+    # then explain them through the same structured path as the translation branch.
+    if not translation_text and formulas:
+        raw_formulas = await extract_formulas_from_raw_text(full_text, provider, model)
+        if raw_formulas:
+            return await _explain_translation_formulas(raw_formulas, full_text, provider, model, batch_size)
+    if not formulas:
+        return _wrap_html(await _explain_from_text(full_text, provider, model))
     valid_formulas = [f for f in formulas if _is_valid_formula(f.get("latex", ""))]
     if not valid_formulas: return _wrap_html(await _explain_from_text(full_text, provider, model))
     sp = render_template("paper/formula_explainer.md", strip=True)

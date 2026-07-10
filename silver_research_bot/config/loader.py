@@ -46,6 +46,15 @@ def load_config(config_path: Path | None = None) -> Config:
     """
     path = config_path or get_config_path()
 
+    # pydantic-settings looks for .env in CWD. If not found there, check
+    # the config directory (~/.silver_research_bot/.env) as a fallback so
+    # production deployments work regardless of working directory.
+    _cwd_env = Path(".env")
+    _cfg_env = path.parent / ".env"
+    if not _cwd_env.exists() and _cfg_env.exists():
+        import os as _os
+        _os.chdir(str(path.parent))
+
     config = Config()
     if path.exists():
         try:

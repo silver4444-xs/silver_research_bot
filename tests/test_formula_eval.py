@@ -57,13 +57,22 @@ def _is_fragment_fn(c: str) -> bool:
     c = c.strip()
     if not c:
         return True
+    if "◈" in c:
+        return True
     if "\\" in c:
         return False
     if re.search(r'[_^=+<>≤≥≠≈≡∈⊂⊆∪∩∫∑∏∇∂]', c):
         return False
-    alpha_only = re.sub(r'[\s,.;:()\[\]{}|]', '', c)
+    alpha_only = re.sub(r'[\s,.;:()\[\]{}|0-9+\-*/×⋅±]', '', c)
+    if not alpha_only or len(alpha_only) <= 1:
+        return True
     if len(alpha_only) <= 3 and re.match(r'^[a-zA-Z]+$', alpha_only):
         return True
+    words = c.split()
+    if len(words) >= 3:
+        alpha_words = [w for w in words if re.match(r'^[a-zA-Z]{2,}$', w)]
+        if len(alpha_words) >= 3:
+            return True
     return False
 
 
@@ -81,11 +90,7 @@ class TestFormulaValidator:
     """Test _is_valid_formula — the central validation gate."""
 
     def test_all_display_formulas_pass(self, ground_truth_formulas, parsed_dataset):
-        """Every ground-truth display formula should pass _is_valid_formula.
-
-        False negatives are collected and reported (not failed) to document
-        gaps (e.g. _COMPLETE_FORMULA_RE coverage).
-        """
+        """Every ground-truth display formula should pass _is_valid_formula."""
         failures: list[tuple[str, int, str]] = []
         for f in parsed_dataset.display_formulas:
             if not _is_valid_formula(f.latex):
@@ -93,9 +98,9 @@ class TestFormulaValidator:
 
         total = len(parsed_dataset.display_formulas)
         fail_count = len(failures)
-        rate = (total - fail_count) / total * 100 if total else 0
+        recall = (total - fail_count) / total * 100 if total else 0
 
-        print(f"\n    Ground-truth recall: {total - fail_count}/{total} = {rate:.1f}%")
+        print(f"\n    Ground-truth recall: {total - fail_count}/{total} = {recall:.1f}%")
         if failures:
             by_cat: dict[str, list[str]] = {}
             for latex, pid, cat in failures:
@@ -107,8 +112,11 @@ class TestFormulaValidator:
                     print(f"      - {item}")
                 if len(items) > 5:
                     print(f"      ... and {len(items) - 5} more")
-        if fail_count:
-            print(f"\n    [{fail_count} false negatives — see report for details]")
+
+        assert recall >= 98.0, (
+            f"Ground-truth recall {recall:.1f}% below 98% threshold. "
+            f"{fail_count} false negatives. First: {failures[0] if failures else 'N/A'}"
+        )
 
     def test_all_bad_fragments_rejected(self, known_bad_fragments):
         """All known-bad and synthesized fragments must be REJECTED."""
@@ -120,7 +128,7 @@ class TestFormulaValidator:
         assert len(accepted) == 0, f"{len(accepted)} bad fragments passed"
 
     def test_by_category_recall(self, parsed_dataset):
-        """Per-category acceptance rate — flag any <95%."""
+        """Per-category acceptance rate — must be ≥ 95%."""
         by_cat: dict[str, list[str]] = {}
         for f in parsed_dataset.display_formulas:
             by_cat.setdefault(f.category, []).append(f.latex)
@@ -133,10 +141,10 @@ class TestFormulaValidator:
                 low_cats.append((cat, accepted, len(formulas), rate))
             print(f"    [{cat}] {accepted}/{len(formulas)} = {rate:.1f}%")
 
-        if low_cats:
-            print(f"\n    Categories below 95%:")
-            for cat, acc, tot, rate in low_cats:
-                print(f"      {cat}: {acc}/{tot} = {rate:.1f}%")
+        assert not low_cats, (
+            f"Categories below 95% recall: "
+            + "; ".join(f"{c}: {a}/{t}={r:.1f}%" for c, a, t, r in low_cats)
+        )
 
     def test_vulnerable_commands_analysis(self, parsed_dataset):
         """Identify formulas using LaTeX commands not in _COMPLETE_FORMULA_RE."""
@@ -250,10 +258,13 @@ class TestFragmentFilter:
     """Test _is_fragment — post-LLM HTML card filter."""
 
     def test_fragment_detection(self):
-        """Short alpha-only content → fragment; LaTeX/ops → keep."""
-        for fexpr in ["x", "t n", "ab", "  "]:
+        """Short alpha-only / numeric / prose content → fragment; LaTeX/ops → keep."""
+        # Must reject
+        for fexpr in ["x", "t n", "ab", "  ", "1", "12", "a", "◈FIG_3◈",
+                       "the quick brown fox", "this is prose text"]:
             assert _is_fragment_fn(fexpr), f"'{fexpr}' should be fragment"
 
+        # Must keep
         for fexpr in [
             r"\varphi_{t}^{n,m} = 1",
             r"x_i^2 + y_i^2",
@@ -291,6 +302,26 @@ class TestEdgeCases:
         assert not _is_valid_formula(r"\varphi = 1 表示通信")
         assert not _is_valid_formula(r"x + y の最適化")
         assert _is_valid_formula(r"\varphi = 1")
+
+    def test_cjk_in_text_blocks_pass(self):
+        """Formulas with CJK inside \\text{} MUST pass. Regression test."""
+        must_pass = [
+            r"a_k(t) = \begin{cases} 1, & \text{节点在时隙 t 决定进行任务卸载} \\ 0, & \text{otherwise} \end{cases}",
+            r"\theta = \arctan\left(\frac{z}{r}\right) \quad \text{与} \quad \arcsin\left(\frac{z}{d}\right)",
+            r"\min_{x} f(x) \quad \text{s.t.} \quad g(x) \leq 0",
+        ]
+        for f in must_pass:
+            assert _is_valid_formula(f), f"Formula with CJK in \\text{{}} rejected: {f[:60]}..."
+
+    def test_cjk_outside_text_rejected(self):
+        """CJK OUTSIDE \\text{} must still be rejected."""
+        must_fail = [
+            r"\varphi = 1 表示通信",
+            r"x + y の最適化",
+            r"\sum_{i=1}^n x_i 其中 n 是样本数",
+        ]
+        for f in must_fail:
+            assert not _is_valid_formula(f), f"CJK in body should be rejected: {f[:60]}..."
 
     def test_balanced_brackets(self):
         assert not _is_valid_formula(r"\in [0, 2\pi")
