@@ -228,7 +228,7 @@ function renderFormula(t){if(!t)return'';if(t.indexOf('<div class="frow"')>-1||t
   // Sanitize LaTeX special chars
   t=t.replace(/(<div class="fexpr">)([\s\S]*?)(<\/div>)/g,function(_,o,c,e){c=sanitizeLatex(c);if(/^\s*\$/.test(c))return o+c+e;c=c.replace(/^\s+|\s+$/g,'');return o+'$$'+c+'$$'+e})
   // Auto-wrap unwrapped LaTeX in .fmean: \cmd{...} patterns
-  t=t.replace(/(<div class="fmean">)([\s\S]*?)(<\/div>)/g,function(_,o,c,e){c=c.replace(/(\\[a-zA-Z]+(?:\{[^}]*\})+(?!\$))/g,'$<span class="math-inline">$1</span>$');return o+c+e})
+  t=t.replace(/(<div class="fmean">)([\s\S]*?)(<\/div>)/g,function(_,o,c,e){(function(sc){var mb=[];sc=sc.replace(/\$\$[\s\S]*?\$\$|\$[\s\S]*?\$/g,function(m){mb.push(m);return'￰M'+(mb.length-1)+'￰'});sc=sc.replace(/(\\[a-zA-Z]+(?:\{[^}]*\})+(?!\$))/g,'$$$1$');sc=sc.replace(/￰M(\d+)￰/g,function(_,i){return mb[parseInt(i)]});return sc})(c);return o+c+e})
   setTimeout(retypeset,100);return t}return renderAll(t)}
 function clearPoll(){if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null}}
 async function openPaper(pid){clearPoll()
