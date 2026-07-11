@@ -18,6 +18,10 @@ class AuditReport:
     passed: bool = True
     issues: list[dict] = field(default_factory=list)
     checks: dict[str, bool] = field(default_factory=dict)
+    overall_grade: str = ""
+    overall_score: int = 0
+    dimension_scores: dict = field(default_factory=dict)
+    summary: str = ""
 
 
 async def audit_analysis(
@@ -105,6 +109,39 @@ def _check_formula_count(
         })
 
 
+def _parse_llm_audit_json(content: str) -> dict | None:
+    """解析 LLM 响应中的 JSON，处理常见格式问题。"""
+    import json as _json
+
+    text = content.strip()
+
+    # 去除 markdown 代码块标记
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines and lines[0].strip() in ("```json", "```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    # 直接解析
+    try:
+        return _json.loads(text)
+    except _json.JSONDecodeError:
+        pass
+
+    # 尝试从文本中提取 JSON (第一个 { 到最后一个 })
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return _json.loads(text[start:end + 1])
+        except _json.JSONDecodeError:
+            pass
+
+    return None
+
+
 async def _llm_audit(
     report: AuditReport,
     translation: str | None,
@@ -112,7 +149,7 @@ async def _llm_audit(
     provider: "LLMProvider",
     model: str,
 ) -> None:
-    """使用 LLM 进行深度审计。"""
+    """使用 LLM 进行深度审计，解析结构化 JSON 响应。"""
     system_prompt = render_template("paper/auditor.md", strip=True)
     context_parts = []
     if translation:
@@ -135,11 +172,72 @@ async def _llm_audit(
             ],
             tools=None,
         )
-    except Exception:
+    except Exception as e:
+        report.passed = False
+        report.issues.append({
+            "severity": "严重",
+            "dimension": "LLM审计",
+            "detail": f"LLM 深度审计调用失败: {e}",
+            "fix": "检查 Provider 配置和网络连接后重新运行审计",
+        })
         return
 
-    if response.content:
+    if not response.content:
         report.issues.append({
-            "severity": "建议", "dimension": "LLM审计",
-            "detail": response.content[:1000],
+            "severity": "一般",
+            "dimension": "LLM审计",
+            "detail": "LLM 审计返回空内容",
+            "fix": "重新运行审计或更换模型",
         })
+        return
+
+    parsed = _parse_llm_audit_json(response.content)
+    if parsed is None:
+        report.passed = False
+        report.issues.append({
+            "severity": "建议",
+            "dimension": "LLM审计",
+            "detail": response.content[:2000],
+            "fix": "LLM 未返回有效 JSON，需检查 Prompt 模板",
+        })
+        return
+
+    # 填充报告字段
+    report.overall_grade = str(parsed.get("overall_grade", ""))
+    report.overall_score = int(parsed.get("overall_score", 0))
+    report.dimension_scores = parsed.get("dimension_scores", {})
+    if not isinstance(report.dimension_scores, dict):
+        report.dimension_scores = {}
+
+    # 提取问题列表
+    llm_issues = parsed.get("issues", [])
+    if isinstance(llm_issues, list):
+        for iss in llm_issues:
+            if not isinstance(iss, dict):
+                continue
+            severity = str(iss.get("severity", "建议"))
+            if severity not in ("严重", "一般", "建议"):
+                severity = "建议"
+            issue = {
+                "severity": severity,
+                "dimension": str(iss.get("dimension", "LLM审计")),
+                "detail": str(iss.get("detail", "")),
+            }
+            fix = iss.get("fix")
+            if fix:
+                issue["fix"] = str(fix)
+            report.issues.append(issue)
+            if severity == "严重":
+                report.passed = False
+
+    # 填充 checks 字典
+    ds = report.dimension_scores
+    for dim in ["translation_completeness", "formula_completeness",
+                "analysis_coverage", "consistency", "overall_quality"]:
+        report.checks[dim] = ds.get(dim, 0) >= 60
+
+    # 综合得分过低视为不通过
+    if report.overall_score < 60:
+        report.passed = False
+
+    report.summary = str(parsed.get("summary", ""))

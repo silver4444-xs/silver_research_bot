@@ -85,9 +85,20 @@ def _extract_subsections(text: str) -> list[dict]:
     _STRIP_DISPLAY = re.compile(r'\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]')
     def _clean(s: str) -> str:
         s = _STRIP_DISPLAY.sub('', s)
-        s = re.sub(r'\\[a-zA-Z]+\{[^}]*\}', '', s)
+        # Protect inline $...$ blocks from truncation and further processing
+        math_blocks = []
+        def _protect(m):
+            math_blocks.append(m.group(0))
+            return '\x00M' + str(len(math_blocks) - 1) + '\x00'
+        # Also protect \(...\) inline math blocks
+        s = re.sub(r'(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)', _protect, s)
+        s = re.sub(r'\\\(([^\\\n]+?)\\\)', _protect, s)
         s = re.sub(r'\s+', ' ', s).strip()
-        return _render_md_inline(_truncate_at_sentence(s))
+        s = _truncate_at_sentence(s)
+        s = _render_md_inline(s)
+        for i, block in enumerate(math_blocks):
+            s = s.replace('\x00M' + str(i) + '\x00', block)
+        return s
     pattern = re.compile(r'^### (.+)$', re.MULTILINE)
     sections = []
     matches = list(pattern.finditer(text))
@@ -141,8 +152,57 @@ def _build_overview(analysis: dict[str, str]) -> str:
     return f'<div class="overview">\n{"".join(parts)}\n</div>'
 
 
-def _build_mermaid_from_text(text: str, title: str) -> str:
-    """Build a clean Mermaid flowchart from markdown section headers."""
+def _mermaid_safe_label(text: str, max_len: int = 50) -> str:
+    """Remove characters that break Mermaid syntax from label text."""
+    text = re.sub(r'["#&<>(){}\[\];]', '', text)
+    text = text.replace('|', '/')
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text[:max_len]
+
+
+def _mermaid_safe_id(text: str) -> str:
+    """Create a Mermaid-safe identifier from arbitrary text."""
+    safe = re.sub(r'[^a-zA-Z0-9_一-鿿]', '_', text).strip('_')
+    return safe or 'G'
+
+
+def _sanitize_mermaid_code(code: str) -> str:
+    """Sanitize LLM-generated Mermaid code by removing problematic characters.
+
+    Handles # (comment), &<> (HTML-sensitive), and preserves edge-label |…| syntax.
+    """
+    clean_lines = []
+    for line in code.split('\n'):
+        stripped = line.lstrip()
+        if stripped.startswith('%%') or stripped.startswith('//'):
+            continue
+        if re.match(r'^\s*#', line):
+            continue
+        # Scan char by char; track whether we're inside "…" and inside |…| edge labels
+        result = []
+        in_quote = False
+        in_edge_label = False
+        for ch in line:
+            if ch == '"':
+                in_quote = not in_quote
+                result.append(ch)
+            elif ch == '|' and not in_quote:
+                in_edge_label = not in_edge_label
+                result.append(ch)
+            elif ch == '#' and not in_quote and not in_edge_label:
+                pass  # strip unquoted comment char
+            elif ch in '&<>' and not in_quote:
+                pass  # strip HTML-sensitive chars
+            else:
+                result.append(ch)
+        clean = ''.join(result)
+        if clean.strip():
+            clean_lines.append(clean)
+    return '\n'.join(clean_lines)
+
+
+def _build_mermaid_from_headers(text: str, title: str) -> str:
+    """Fallback: Build a simple Mermaid flowchart from markdown section headers."""
     headers = re.findall(r'^### (.+)$', text, re.MULTILINE)
     if not headers:
         headers = re.findall(r'^\*\*(.+?)\*\*', text, re.MULTILINE)
@@ -154,14 +214,13 @@ def _build_mermaid_from_text(text: str, title: str) -> str:
     lines = ["flowchart TD"]
     for i, h in enumerate(headers[:10]):
         nid = f"N{i}"
-        label = h[:40].replace('"', "'")
+        label = _mermaid_safe_label(h, max_len=40)
         node_ids.append(nid)
         if i == 0:
             lines.append(f'  {nid}["{label}"]')
         else:
-            shape = "{" if any(kw in h for kw in ("判断", "选择", "是否", "条件")) else ""
-            if shape:
-                lines.append(f'  {nid}{{{{"{label}"}}}}')
+            if any(kw in h for kw in ("判断", "选择", "是否", "条件")):
+                lines.append(f'  {nid}{{"{label}"}}')
             else:
                 lines.append(f'  {nid}["{label}"]')
             lines.append(f'  {node_ids[i-1]} --> {nid}')
@@ -171,31 +230,168 @@ def _build_mermaid_from_text(text: str, title: str) -> str:
     return f'<div class="mermaid-wrap"><h3>{title}</h3><pre class="mermaid">\n{mermaid}\n</pre></div>'
 
 
-def _build_formula_mermaid(formulas: list[dict]) -> str:
-    """Build formula dependency Mermaid graph from structured formula data."""
-    if not formulas or len(formulas) < 2:
+async def _llm_mermaid_diagram(
+    text: str, diagram_type: str, provider: "LLMProvider", model: str
+) -> str | None:
+    """Use LLM to generate a professional Mermaid flowchart from analysis text."""
+    if not text or not text.strip():
+        return None
+
+    if diagram_type == "system":
+        system_prompt = (
+            "你是一个系统架构可视化专家。根据分析文本生成 Mermaid flowchart。\n\n"
+            "规则：\n"
+            "1. 使用 flowchart TB（上到下）\n"
+            "2. 将系统实体按层次用 subgraph 分组（如设备层/边缘层/云端层/数据流）\n"
+            "3. 节点标签需从文本中提炼，描述具体组件名称和功能（10-20字）\n"
+            "4. 使用不同形状: [矩形]表示实体, [(圆柱)]表示数据存储, [/平行四边形/]表示输入输出\n"
+            "5. 边必须加标签说明数据流/控制流/通信链路的含义（如「上传数据」「下发指令」「状态同步」）\n"
+            "6. 至少包含 5 个节点和 5 条边\n"
+            "7. ⚠️标签中禁止使用这些字符: # & < > \" ' ( ) [ ] { } | ;\n"
+            "8. 只输出 ```mermaid 代码块，不要任何解释文字\n"
+        )
+    else:
+        system_prompt = (
+            "你是一个算法流程可视化专家。根据分析文本生成 Mermaid flowchart。\n\n"
+            "规则：\n"
+            "1. 使用 flowchart TD（上到下）\n"
+            "2. 用 [矩形] 表示算法步骤，{菱形} 表示判断/分支条件\n"
+            "3. 边必须加标签：分支边上标注「是」「否」或具体条件，循环边上标注「迭代」或「重复」\n"
+            "4. 体现算法的迭代/循环结构（用回边连接后续步骤到前序步骤）\n"
+            "5. 步骤描述需从文本中提炼关键操作（10-20字）\n"
+            "6. 至少包含 6 个节点\n"
+            "7. ⚠️标签中禁止使用这些字符: # & < > \" ' ( ) [ ] { } | ;\n"
+            "8. 只输出 ```mermaid 代码块，不要任何解释文字\n"
+        )
+
+    try:
+        response = await provider.chat_with_retry(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text[:4000]},
+            ],
+            tools=None,
+        )
+        content = (response.content or "").strip()
+        m = re.search(r"```mermaid\s*\n([\s\S]*?)```", content)
+        if m:
+            code = _sanitize_mermaid_code(m.group(1))
+            if code and re.search(r'-->|---|\.\.->|==>|-.->', code):
+                return code
+        if content.startswith("flowchart ") or content.startswith("graph "):
+            code = _sanitize_mermaid_code(content)
+            if re.search(r'-->|---|\.\.->|==>|-.->', code):
+                return code
+        return None
+    except Exception:
+        return None
+
+
+async def _build_mermaid_from_text(
+    text: str, title: str, provider: "LLMProvider", model: str
+) -> str:
+    """Generate a Mermaid flowchart: LLM-driven for quality, fallback to headers."""
+    if not text or not text.strip():
         return ""
-    # Use formula indices to build a simple chain graph
-    nodes_per_row = 5
-    rows = [formulas[i:i + nodes_per_row] for i in range(0, len(formulas), nodes_per_row)]
+    diagram_type = "system" if "系统" in title or "架构" in title else "algorithm"
+    mermaid = await _llm_mermaid_diagram(text, diagram_type, provider, model)
+    if mermaid:
+        return f'<div class="mermaid-wrap"><h3>{title}</h3><pre class="mermaid">\n{mermaid}\n</pre></div>'
+    return _build_mermaid_from_headers(text, title)
+
+
+def _build_formula_mermaid(formulas: list[dict], analysis: dict[str, str] | None = None) -> str:
+    """Build formula relationship Mermaid graph grouped by paper sections."""
+    if not formulas or len(formulas) < 2:
+        if formulas:
+            # Single formula: show standalone node with safe label
+            f = formulas[0]
+            raw = f.get("latex", "")[:60]
+            safe = re.sub(r'\\\(|\\\)|\\\[|\\\]|\$\$?', '', raw)
+            safe = re.sub(r'\\[a-zA-Z]+\{[^}]*\}', '', safe)
+            safe = re.sub(r'\\[a-zA-Z]+', '', safe)
+            safe = re.sub(r'[{}\\]', '', safe).strip()
+            safe = _mermaid_safe_label(safe, max_len=35)
+            return f'<div class="mermaid-wrap"><h3>公式关系图谱</h3><pre class="mermaid">\nflowchart TD\n  F{f["index"]}["式{f["index"]}: {safe}"]\n</pre></div>'
+        return ""
+
+    # Extract section headers from analysis text to map formula context to sections
+    section_ranges = []
+    if analysis:
+        combined = "\n".join(v for v in analysis.values() if v)
+        sec_pattern = re.compile(r'^### (.+)$', re.MULTILINE)
+        sec_matches = list(sec_pattern.finditer(combined))
+        for i, m in enumerate(sec_matches):
+            start = m.start()
+            end = sec_matches[i + 1].start() if i + 1 < len(sec_matches) else len(combined)
+            section_ranges.append((m.group(1).strip()[:20], start, end))
+
+    # Map each formula to the best-matching section by context overlap
+    formula_sections = {}
+    for f in formulas:
+        ctx = f.get("context", "")
+        best_sec = None
+        best_score = 0
+        for sec_name, sec_start, sec_end in section_ranges:
+            # Count overlapping characters between context and section range
+            ctx_in_combined = "\n".join(v for v in analysis.values() if v)
+            # Simple approach: check if context keywords appear in section text
+            ctx_words = set(ctx.split()[:10])
+            sec_text = ctx_in_combined[sec_start:sec_end]
+            score = sum(1 for w in ctx_words if w in sec_text)
+            if score > best_score:
+                best_score = score
+                best_sec = sec_name
+        if best_sec and best_score > 0:
+            formula_sections[f["index"]] = best_sec
+
+    # Group formulas by section
+    groups: dict[str, list[dict]] = {}
+    ungrouped = []
+    for f in formulas:
+        sec = formula_sections.get(f["index"])
+        if sec:
+            groups.setdefault(sec, []).append(f)
+        else:
+            ungrouped.append(f)
+
     lines = ["flowchart TD"]
-    prev_row_nodes = []
-    for ri, row in enumerate(rows):
+    prev_last_node = None
+
+    def _emit_group(label: str, group_formulas: list[dict]):
+        nonlocal prev_last_node
+        safe_id = _mermaid_safe_id(label)
+        safe_display = _mermaid_safe_label(label[:30])
+        lines.append(f'  subgraph {safe_id}["{safe_display}"]')
         row_nodes = []
-        for fi, f in enumerate(row):
-            nid = f"F{f['index']}"
-            latex = f.get("latex", "")[:30].replace('"', "'")
-            lines.append(f'  {nid}["式{f["index"]}: {latex}"]')
+        for f in group_formulas:
+            nid = f'F{f["index"]}'
+            latex_raw = f.get("latex", "")[:60]
+            flabel = re.sub(r'\\\(|\\\)|\\\[|\\\]|\$\$?', '', latex_raw)
+            flabel = re.sub(r'\\[a-zA-Z]+\{[^}]*\}', '', flabel)
+            flabel = re.sub(r'\\[a-zA-Z]+', '', flabel)
+            flabel = re.sub(r'[{}\\]', '', flabel)
+            flabel = _mermaid_safe_label(flabel.strip(), max_len=35)
+            lines.append(f'    {nid}["式{f["index"]}: {flabel}"]')
             row_nodes.append(nid)
-        # Connect within row
+        # Connect within group in index order
         for i in range(1, len(row_nodes)):
-            lines.append(f'  {row_nodes[i-1]} --> {row_nodes[i]}')
-        # Connect to previous row
-        if prev_row_nodes and row_nodes:
-            lines.append(f'  {prev_row_nodes[-1]} --> {row_nodes[0]}')
-        prev_row_nodes = row_nodes
-    mermaid = "\n".join(lines[:60])  # limit to ~60 lines for reliability
-    return f'<div class="mermaid-wrap"><h3>公式依赖关系</h3><pre class="mermaid">\n{mermaid}\n</pre></div>'
+            lines.append(f'    {row_nodes[i-1]} --> {row_nodes[i]}')
+        lines.append('  end')
+        if row_nodes:
+            if prev_last_node:
+                # Light connector between groups
+                lines.append(f'  {prev_last_node} -.-> {row_nodes[0]}')
+            prev_last_node = row_nodes[-1]
+
+    for sec_name, group in groups.items():
+        _emit_group(sec_name, sorted(group, key=lambda f: f["index"]))
+    if ungrouped:
+        _emit_group("其他公式", sorted(ungrouped, key=lambda f: f["index"]))
+
+    mermaid = "\n".join(lines[:80])
+    return f'<div class="mermaid-wrap"><h3>公式关系图谱</h3><pre class="mermaid">\n{mermaid}\n</pre></div>'
 
 
 async def _llm_experiment_table(
@@ -329,16 +525,16 @@ async def generate_visualization(
     # Part 1: Programmatic 4-layer overview
     overview = _build_overview(analysis)
 
-    # Part 2: Programmatic Mermaid diagrams from extracted headers
-    sys_mermaid = _build_mermaid_from_text(
-        analysis.get("system_model", ""), "系统架构流程"
+    # Part 2: LLM-driven Mermaid diagrams (fallback to header-based)
+    sys_mermaid = await _build_mermaid_from_text(
+        analysis.get("system_model", ""), "系统架构流程", provider, model
     )
-    algo_mermaid = _build_mermaid_from_text(
-        analysis.get("optimization_algorithm", ""), "算法流程"
+    algo_mermaid = await _build_mermaid_from_text(
+        analysis.get("optimization_algorithm", ""), "算法流程", provider, model
     )
 
     # Part 3: Formula dependency graph from structured data
-    formula_mermaid = _build_formula_mermaid(formulas or [])
+    formula_mermaid = _build_formula_mermaid(formulas or [], analysis)
 
     # Part 4: LLM for experiment comparison table only
     exp_html = await _llm_experiment_table(

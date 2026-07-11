@@ -233,7 +233,12 @@ class PaperOrchestrator:
             json.dumps({
                 "paper_id": audit_report.paper_id,
                 "passed": audit_report.passed,
+                "overall_grade": audit_report.overall_grade,
+                "overall_score": audit_report.overall_score,
+                "dimension_scores": audit_report.dimension_scores,
                 "issues": audit_report.issues,
+                "checks": audit_report.checks,
+                "summary": audit_report.summary,
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )

@@ -423,6 +423,9 @@ def _validate_formulas(translated: str) -> str:
         ):
             inner = inner.replace('&', r'\&')
         balanced = _balance_latex_braces(inner)
+        # Strip \tag{...} from aligned/gathered/split — MathJax rejects it here
+        if re.search(r'\\begin\{(aligned|gathered|split)\*?\}', balanced):
+            balanced = re.sub(r'\\tag\{[^}]*\}', '', balanced)
         return sep + balanced + sep
     fixed = re.sub(r"\$\$(.+?)\$\$", _fix_block, fixed, flags=re.DOTALL)
     fixed = re.sub(r"(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)", _fix_block, fixed)
