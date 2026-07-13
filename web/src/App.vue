@@ -264,23 +264,25 @@ async function pollProgress(){
       upStatus.value='分析完成！';await loadPapers()
     }
   }catch(e){progressMsg.value='轮询失败: '+e.message;console.error('pollProgress',e)}}
-function retypeset(){if(window.MathJax)MathJax.typesetPromise();if(window.mermaid)try{mermaid.run({querySelector:'.mermaid'})}catch(e){}}function renderAll(t){let h=renderMd(t);setTimeout(retypeset,100);return h}
+function retypeset(){if(window.MathJax)MathJax.typesetPromise();if(window.mermaid)try{mermaid.run({querySelector:'.mermaid'})}catch(e){}}
+function retypesetDeferred(){nextTick(()=>{requestAnimationFrame(()=>{retypeset()})})}
+function renderAll(t){let h=renderMd(t);retypesetDeferred();return h}
 function sanitizeLatex(s){return s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,"").replace(/#/g,'\\#').replace(/%/g,'\\%').replace(/~/g,'\\textasciitilde{}').replace(/[“”]/g,'"').replace(/[‘’]/g,"'").replace(/ /g,' ')}
 function renderFormula(t){if(!t)return'';if(t.indexOf('<div class="frow"')>-1||t.indexOf('<style>')>-1){
   // Sanitize LaTeX special chars
   t=t.replace(/(<div class="fexpr">)([\s\S]*?)(<\/div>)/g,function(_,o,c,e){c=sanitizeLatex(c);if(/^\s*\$/.test(c))return o+c+e;c=c.replace(/^\s+|\s+$/g,'');return o+'$$'+c+'$$'+e})
   // Auto-wrap unwrapped LaTeX in .fmean: \cmd{...} patterns
   t=t.replace(/(<div class="fmean">)([\s\S]*?)(<\/div>)/g,function(_,o,c,e){(function(sc){var mb=[];sc=sc.replace(/\$\$[\s\S]*?\$\$|\$[\s\S]*?\$/g,function(m){mb.push(m);return'￰M'+(mb.length-1)+'￰'});sc=sc.replace(/(\\[a-zA-Z]+(?:\{[^}]*\})+(?!\$))/g,'$$$1$');sc=sc.replace(/￰M(\d+)￰/g,function(_,i){return mb[parseInt(i)]});return sc})(c);return o+c+e})
-  setTimeout(retypeset,100);return t}return renderAll(t)}
+  retypesetDeferred();return t}return renderAll(t)}
 function clearPoll(){if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null}}
 async function openPaper(pid){clearPoll()
   try{pdet.value=await api(`/api/paper/${pid}`);dt.value=pdet.value.translation?'translation':'system_model';ps.value='detail'
     if(pdet.value.status==='processing'){curPaperId.value=pid;pStages.value=STAGES.map(s=>({...s,s:'pending'}));_pollTimer=setInterval(pollDetailProgress,2000)}
-    else{pStages.value=STAGES.map(s=>({...s,s:'done'}));setTimeout(retypeset,300)}}catch(e){console.error(e);alert('加载论文失败: '+(e.message||'网络错误，请确认后端已启动'))}}
+    else{pStages.value=STAGES.map(s=>({...s,s:'done'}));retypesetDeferred()}}catch(e){console.error(e);alert('加载论文失败: '+(e.message||'网络错误，请确认后端已启动'))}}
 async function pollDetailProgress(){if(!curPaperId.value)return
   try{const p=await api(`/api/paper/${curPaperId.value}/progress`)
     pStages.value=STAGES.map(s=>{if(s.id===p.stage)return{...s,s:p.status==='completed'?'done':'active'};const si=STAGES.findIndex(x=>x.id===p.stage),ci=STAGES.findIndex(x=>x.id===s.id);return{...s,s:ci<si?'done':'pending'}})
-    if(p.stage==='audit'&&p.status==='completed'){clearPoll();pdet.value=await api(`/api/paper/${curPaperId.value}`);setTimeout(retypeset,300)}}catch(e){/*ignore*/}}
+    if(p.stage==='audit'&&p.status==='completed'){clearPoll();pdet.value=await api(`/api/paper/${curPaperId.value}`);retypesetDeferred()}}catch(e){/*ignore*/}}
 async function doExport(){if(!pdet.value||!pdet.value.paper_id)return;const a=document.createElement('a');a.href=`/api/paper/${pdet.value.paper_id}/export`;a.download=`${pdet.value.paper_id}_analysis.zip`;a.click()}
 function exportArtifact(pid, atype, label){const a=document.createElement('a');a.href=`/api/paper/${pid}/export/${atype}`;const ext=atype==='visualization'||atype==='citation_graph'?'.html':atype==='audit'?'.json':'.md';a.download=(label||atype)+ext;a.click()}
 async function delPaper(pid){if(!confirm('确认删除？'))return;try{await fetch(`/api/paper/${pid}`,{method:'DELETE'});await loadPapers();pdet.value=null}catch(e){console.error(e)}}
@@ -361,7 +363,7 @@ function renderMd(t){if(!t)return''
   t=t.replace(/\$\$([\s\S]*?)\$\$/g,(_,c)=>{mb.push('$$'+c+'$$');return'◈M'+mb.length+'◈'})
   t=t.replace(/(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)/g,(_,c)=>{mb.push('$'+c+'$');return'◈M'+mb.length+'◈'})
   t=t.replace(/```mermaid\s*\n([\s\S]*?)```/g,(_,c)=>{m.push(c);return'%%M'+m.length+'%%'})
-  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  t=t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/^#### (.+)$/gm,'<h5>$1</h5>').replace(/^### (.+)$/gm,'<h4>$1</h4>')
     .replace(/^## (.+)$/gm,'<h3>$1</h3>').replace(/^# (.+)$/gm,'<h2>$1</h2>')
     .replace(/^- (.+)$/gm,'<li>$1</li>').replace(/(<li>.*<\/li>\n?)+/g,'<ul>$&</ul>')
@@ -371,10 +373,14 @@ function renderMd(t){if(!t)return''
     .replace(/\|(.+)\|/g,m=>'<tr>'+m.slice(1,-1).split('|').map(c=>/\-{3,}/.test(c)?'<th>'+c+'</th>':'<td>'+c.trim()+'</td>').join('')+'</tr>')
     .replace(/(<tr>.*<\/tr>\n?)+/g,'<table>$&</table>')
     .replace(/^---$/gm,'<hr>')
-    .replace(/\n\n/g,'</p><p>')
+  let tbl=[]
+  t=t.replace(/(<table>[\s\S]*?<\/table>)/g,(_,c)=>{tbl.push(c);return'◈T'+tbl.length+'◈'})
+  t=t.replace(/\n\n/g,'</p><p>')
     .replace(/\n/g,'<br>').replace(/^(?!<)/,'<p>').replace(/(?<!>)$/,'</p>')
     .replace(/%%M(\d+)%%/g,(_,i)=>'<pre class="mermaid">'+m[parseInt(i)-1]+'</pre>')
-    .replace(/◈M(\d+)◈/g,(_,i)=>mb[parseInt(i)-1])}
+    .replace(/◈T(\d+)◈/g,(_,i)=>tbl[parseInt(i)-1])
+    .replace(/◈M(\d+)◈/g,(_,i)=>mb[parseInt(i)-1])
+  return t}
 function insMd(before,after){const ta=document.querySelector('.editor-textarea');if(!ta)return;const s=ta.selectionStart,e=ta.selectionEnd,v=upText.value;if(s!==e){upText.value=v.slice(0,s)+before+v.slice(s,e)+after+v.slice(e);ta.focus();ta.setSelectionRange(s+before.length,e+before.length)}else{const nl=s>0&&v[s-1]!=='\n'?'\n':'';upText.value=v.slice(0,s)+nl+before+after+v.slice(e);ta.focus();ta.setSelectionRange(s+nl.length+before.length,s+nl.length+before.length)}}
 function syncScroll(fromPreview){const ed=document.querySelector('.editor-textarea'),pv=document.querySelector('.pc');if(!ed||!pv)return;if(fromPreview){ed.scrollTop=(pv.scrollTop/(pv.scrollHeight-pv.clientHeight))*(ed.scrollHeight-ed.clientHeight)}else{pv.scrollTop=(ed.scrollTop/(ed.scrollHeight-ed.clientHeight))*(pv.scrollHeight-pv.clientHeight)}}
 function fmtSize(bytes){if(!bytes)return'0 B';const u=['B','KB','MB','GB'];let i=0,s=bytes;while(s>=1024&&i<u.length-1){s/=1024;i++}return s.toFixed(i===0?0:1)+' '+u[i]}
@@ -447,7 +453,7 @@ function fmtJson(a){try{return JSON.stringify(typeof a==='string'?JSON.parse(a):
 			}
 			h += '</div>';
 		}
-		setTimeout(retypeset, 100);
+		retypesetDeferred();
 		return h;
 	}
 	function _renderAuditNew(d){
@@ -557,7 +563,7 @@ function fmtJson(a){try{return JSON.stringify(typeof a==='string'?JSON.parse(a):
 			h += '<div class="audit-summary">' + renderMd(d.summary) + '</div>';
 		}
 
-		setTimeout(retypeset, 100);
+		retypesetDeferred();
 		return h;
 	}
 
