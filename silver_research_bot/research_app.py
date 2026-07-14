@@ -424,7 +424,7 @@ def _read_paper_from_fs(paper_dir: Path) -> dict:
                     "experiment_design": "analysis_experiment.md", "formula_explanations": "formula_explanations.md",
                     "visualization_html": "analysis_visualization.html", "citation_graph_html": "citation_graph.html",
                     "review_theory": "review_theory.md", "review_engineering": "review_engineering.md",
-                    "review_domain": "review_domain.md", "audit": "audit_report.json"}
+                    "review_domain": "review_domain.md"}
     for key, fn in filename_map.items():
         fp = paper_dir / fn
         if fp.exists():
@@ -464,7 +464,7 @@ def paper_export(paper_id: str):
             "translation.md", "analysis_system_model.md", "analysis_problem.md",
             "analysis_algorithm.md", "analysis_experiment.md",
             "formula_explanations.md", "analysis_visualization.html",
-            "audit_report.json", "extracted.json", "progress.json",
+            "extracted.json", "progress.json",
         ]
         for name in artifact_files:
             fp = paper_dir / name
@@ -513,7 +513,6 @@ _ARTIFACT_EXPORT_MAP = {
     "review_theory":         ("review_theory.md",            "text/markdown",       "理论审稿意见"),
     "review_engineering":    ("review_engineering.md",       "text/markdown",       "工程审稿意见"),
     "review_domain":         ("review_domain.md",            "text/markdown",       "领域审稿意见"),
-    "audit":                 ("audit_report.json",           "application/json",    "审计报告"),
 }
 
 
@@ -578,13 +577,6 @@ def paper_progress(paper_id: str):
     return _json.loads(pf.read_text(encoding="utf-8"))
 
 
-@app.get("/api/paper/{paper_id}/audit")
-def paper_audit(paper_id: str):
-    content = _paper_manager.get_artifact(paper_id, "audit")
-    if content is None:
-        raise HTTPException(status_code=404, detail="审计报告未找到")
-    import json
-    return json.loads(content)
 
 
 @app.get("/api/paper/{paper_id}/figures/{filename}")
@@ -922,7 +914,7 @@ async def paper_stream(websocket: WebSocket, paper_id: str):
                 if current != last_stage:
                     await websocket.send_json({"stage": current, "message": msg, "status": status})
                     last_stage = current
-                if status in ("completed", "failed") and current == "audit":
+                if status in ("completed", "failed") and current == "review":
                     await websocket.send_json({"stage": "done", "message": "Pipeline complete", "status": "done"})
                     break
             await asyncio.sleep(1.5)

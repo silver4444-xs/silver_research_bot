@@ -76,7 +76,6 @@ class PaperOrchestrator:
             StageResult(stage_name="visualize"),
             StageResult(stage_name="citation"),
             StageResult(stage_name="review"),
-            StageResult(stage_name="audit"),
         ])
         _save_plan(plan, paper_dir)
 
@@ -173,8 +172,7 @@ class PaperOrchestrator:
         self._write_progress(paper_dir, "visualize", "running", "正在生成 Mermaid 可视化图表…")
         _mark(plan, "visualize", "running")
         vis_html = await generate_visualization(
-            dim_results, formulas_text, meta_dict["title"],
-            self.provider, self.model, formulas=formulas,
+            dim_results, meta_dict["title"], self.provider, self.model,
         )
         (paper_dir / "analysis_visualization.html").write_text(vis_html, encoding="utf-8")
         analysis.visualization_html = vis_html
@@ -219,32 +217,6 @@ class PaperOrchestrator:
             _mark(plan, "review", "completed")
             self._write_progress(paper_dir, "review", "completed", f"审稿跳过: {e}")
 
-        # ─── Stage 4: Audit ───
-        from silver_research_bot.paper_analyzer.auditor import audit_analysis
-
-        self._write_progress(paper_dir, "audit", "running", "正在执行质量审计…")
-        _mark(plan, "audit", "running")
-        audit_report = await audit_analysis(
-            meta_dict["paper_id"], analysis.translation, dim_results,
-            formulas_text, vis_html, meta_dict["formula_count"],
-            self.provider, self.model,
-        )
-        (paper_dir / "audit_report.json").write_text(
-            json.dumps({
-                "paper_id": audit_report.paper_id,
-                "passed": audit_report.passed,
-                "overall_grade": audit_report.overall_grade,
-                "overall_score": audit_report.overall_score,
-                "dimension_scores": audit_report.dimension_scores,
-                "issues": audit_report.issues,
-                "checks": audit_report.checks,
-                "summary": audit_report.summary,
-            }, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        _mark(plan, "audit", "completed")
-        self._write_progress(paper_dir, "audit", "completed", f"审计{'通过' if audit_report.passed else '未通过'}")
-
         # ─── Finalize ───
         analysis.artifacts = artifacts
         analysis.completed_at = _utc_now()
@@ -275,7 +247,6 @@ class PaperOrchestrator:
             "title": meta_dict["title"],
             "language": lang,
             "status": "completed",
-            "passed_audit": audit_report.passed,
             "artifacts": [a["name"] for a in artifacts],
             "workspace_dir": str(paper_dir),
         }

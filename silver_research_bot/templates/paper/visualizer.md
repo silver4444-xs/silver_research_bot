@@ -1,10 +1,12 @@
-# Visualizer 模板（参考用）
+# Visualizer 模板结构
 
-此模板供 `visualizer.py` 中的 `_llm_experiment_table()` 使用：
+此目录包含 `visualizer.py` 中两个 ISCC 领域可视化模块的 Jinja2 提示模板：
 
-从实验分析文本中提取性能对比数据，输出 HTML `<table class="cmp-table">`。
-表结构：方法名 | 指标1 | 指标2 | 指标3（至少2行数据）。
-只输出 `<table>` 标签，不含任何解释。
+| 模板 | 用途 | 调用位置 |
+|------|------|----------|
+| `visualizer_system.md` | ISCC 系统架构流程图 (7 种架构类型) | `_build_system_architecture_diagram()` |
+| `visualizer_algorithm.md` | 算法流程图 (6 种算法类型) | `_build_algorithm_flow_diagram()` |
 
-> 注意：系统概述图、Mermaid 流程图和公式依赖图现已由 `visualizer.py` 程序化生成，
-> 不再依赖本模板。
+各模板通过 `render_template("paper/visualizer_*.md", ...)` 加载，传入对应的 Jinja2 变量。
+
+> 注意：`visualizer.py` 中系统架构和算法流程图通过上述模板驱动。实验对比表格 (`_llm_experiment_table`) 的 prompt 直接写在代码中。

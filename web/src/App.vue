@@ -137,10 +137,10 @@
       <template v-for="d in dims" :key="d.id"><div class="card" v-if="dt===d.id&&pdet[d.id]"><div class="ch"><h3>{{ d.label }}</h3><button class="btn bg bsm" @click="exportArtifact(pdet.paper_id,d.id,d.label)" :title="'下载'+d.label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button></div><div class="md" v-html="renderAll(pdet[d.id])"></div></div></template>
       <div class="card" v-if="dt==='formulas'&&pdet.formula_explanations"><div class="ch"><h3>公式解读</h3><button class="btn bg bsm" @click="exportArtifact(pdet.paper_id,'formulas','公式解读')" title="下载公式解读"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button></div><div class="md" v-html="renderFormula(pdet.formula_explanations)"></div></div>
       <div class="card" v-if="dt==='visualization'&&pdet.visualization_html"><div class="ch"><h3>可视化分析</h3><button class="btn bg bsm" @click="exportArtifact(pdet.paper_id,'visualization','可视化分析')" title="下载可视化分析"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button></div><iframe :srcdoc="pdet.visualization_html" class="vis-frame" sandbox="allow-scripts allow-same-origin" title="可视化分析"></iframe></div>
-      <div class="card" v-if="dt==='audit'&&pdet.audit"><div class="ch"><h3>审计报告</h3><button class="btn bg bsm" @click="exportArtifact(pdet.paper_id,'audit','审计报告')" title="下载审计报告"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button></div><div v-html="renderAudit(pdet.audit)"></div></div>
+      <div class="card" v-if="false"><div class="ch"><h3>审计报告</h3><button class="btn bg bsm" @click="exportArtifact(pdet.paper_id,'audit','审计报告')" title="下载审计报告"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button></div><div v-html="renderAudit(pdet.audit)"></div></div>
       <div class="card" v-if="dt==='citation_graph'&&pdet.citation_graph_html"><div class="ch"><h3>引用图谱</h3><button class="btn bg bsm" @click="exportArtifact(pdet.paper_id,'citation_graph','引用图谱')" title="下载引用图谱"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button></div><iframe :srcdoc="pdet.citation_graph_html" class="vis-frame" sandbox="allow-scripts"></iframe></div>
       <div class="card" v-if="dt==='review'"><div class="ch"><h3>审稿意见</h3></div><div v-if="pdet.review_theory" style="margin-bottom:16px"><div style="display:flex;align-items:center;gap:8px"><h4 style="margin:0;font-size:14px;color:var(--c-text-secondary)">理论视角</h4><button class="btn bg bsm" @click="exportArtifact(pdet.paper_id,'review_theory','理论审稿意见')" title="下载理论审稿意见"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button></div><div class="md" v-html="renderAll(pdet.review_theory)"></div></div><div v-if="pdet.review_engineering" style="margin-bottom:16px"><div style="display:flex;align-items:center;gap:8px"><h4 style="margin:0;font-size:14px;color:var(--c-text-secondary)">工程视角</h4><button class="btn bg bsm" @click="exportArtifact(pdet.paper_id,'review_engineering','工程审稿意见')" title="下载工程审稿意见"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button></div><div class="md" v-html="renderAll(pdet.review_engineering)"></div></div><div v-if="pdet.review_domain" style="margin-bottom:16px"><div style="display:flex;align-items:center;gap:8px"><h4 style="margin:0;font-size:14px;color:var(--c-text-secondary)">领域视角</h4><button class="btn bg bsm" @click="exportArtifact(pdet.paper_id,'review_domain','领域审稿意见')" title="下载领域审稿意见"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button></div><div class="md" v-html="renderAll(pdet.review_domain)"></div></div><p v-if="!pdet.review_theory&&!pdet.review_engineering&&!pdet.review_domain" class="empty">审稿意见尚未生成。</p></div>
-      <div class="card" v-if="dt==='ask'"><div class="ch"><h3>提问</h3></div><div class="row" style="gap:8px"><input v-model="askQ" placeholder="基于分析结果提问…" style="flex:1" @keydown.enter="doAsk" /><button class="btn bp bsm" @click="doAsk" :disabled="!askQ.trim()">提问</button></div><div v-if="askA" class="md" style="margin-top:12px" v-html="renderMd(askA)"></div></div>
+      <div class="card" v-if="dt==='ask'"><div class="ch"><h3>提问</h3></div><div class="row" style="gap:8px"><input v-model="askQ" placeholder="基于分析结果提问…" style="flex:1" @keydown.enter="doAsk" /><button class="btn bp bsm" @click="doAsk" :disabled="!askQ.trim()">提问</button></div><div v-if="askA" class="md" style="margin-top:12px" v-html="renderAll(askA)"></div></div>
     </div>
 
     <!-- Compare -->
@@ -207,12 +207,12 @@ const icons={
 }
 const nav=[{id:'agent',label:'Agent 对话',icon:icons.chat},{id:'papers',label:'论文研读',icon:icons.file},{id:'rag',label:'文献 RAG',icon:icons.layers}]
 const psub=[{id:'upload',label:'上传论文'},{id:'list',label:'论文列表'},{id:'compare',label:'横向对比'}]
-const dtabs=[{id:'translation',label:'全文翻译'},{id:'system_model',label:'系统模型'},{id:'problem_formulation',label:'问题表述'},{id:'optimization_algorithm',label:'优化算法'},{id:'experiment_design',label:'实验设计'},{id:'formulas',label:'公式解读'},{id:'visualization',label:'可视化'},{id:'citation_graph',label:'引用图谱'},{id:'review',label:'审稿意见'},{id:'audit',label:'审计报告'},{id:'ask',label:'提问'}]
+const dtabs=[{id:'translation',label:'全文翻译'},{id:'system_model',label:'系统模型'},{id:'problem_formulation',label:'问题表述'},{id:'optimization_algorithm',label:'优化算法'},{id:'experiment_design',label:'实验设计'},{id:'formulas',label:'公式解读'},{id:'visualization',label:'可视化'},{id:'citation_graph',label:'引用图谱'},{id:'review',label:'审稿意见'},{id:'ask',label:'提问'}]
 const dims=[{id:'system_model',label:'系统模型分析'},{id:'problem_formulation',label:'问题表述分析'},{id:'optimization_algorithm',label:'优化算法分析'},{id:'experiment_design',label:'实验设计分析'}]
 
 const tab=ref('papers');const ps=ref('upload');const dt=ref('translation');const upMode=ref('file')
 const upFile=ref(null);const upText=ref('');const upLang=ref('auto');const uploading=ref(false);const drag=ref(false);const upStatus=ref('');const progressMsg=ref('');const curPaperId=ref('');const pStages=ref([]);let _pollTimer=null
-const STAGES=[{id:'parse',label:'文档解析'},{id:'translate',label:'全文翻译'},{id:'analyze',label:'四维分析'},{id:'formula_explain',label:'公式解读'},{id:'visualize',label:'可视化'},{id:'citation',label:'引用图谱'},{id:'review',label:'多视角审稿'},{id:'audit',label:'质量审计'}]
+const STAGES=[{id:'parse',label:'文档解析'},{id:'translate',label:'全文翻译'},{id:'analyze',label:'四维分析'},{id:'formula_explain',label:'公式解读'},{id:'visualize',label:'可视化'},{id:'citation',label:'引用图谱'},{id:'review',label:'多视角审稿'}]
 const papers=ref([]);const pdet=ref(null);const selectedPapers=ref(new Set());const cmpIds=ref([]);const cmpResult=ref(null);const comparing=ref(false);const cmpError=ref('')
 const cmpTab=ref('overview');const cmpTabs=[{id:'overview',label:'对比仪表板'},{id:'dimensions',label:'多维对比'},{id:'charts',label:'可视化图表'},{id:'metrics',label:'定量分析'},{id:'synthesis',label:'综合分析'}]
 const cmpReadyPapers=computed(()=>papers.value.filter(p=>p.status==='completed'))
@@ -227,12 +227,12 @@ const chatIn=ref('');const chatReply=ref(null);const chatAttach=ref(null)
 
 const ragQ=ref('retrieval augmented');const ragK=ref(5);const ragTag=ref('');const ragModality=ref('');const ragResults=ref([]);const ragCtx=ref('');const ragSuggest=ref('');const ragSnap=ref({})
 const pfTags=ref('rag,llm');const pf=ref({title:'',abstract:'',content:''})
-const lang=ref('zh');const LOCALE={zh:{eyebrow:'论文分析平台',title:'研究论文深度分析工作台',subtitle:'上传 PDF 即可自动翻译、四维分析、公式解读与可视化审计。',api:'API',analyzed:'已分析',refresh:'刷新'},en:{eyebrow:'Paper Analysis Platform',title:'Research Paper Analysis Workbench',subtitle:'Upload PDF for auto translation, 4D analysis, formula explanation & audit.',api:'API',analyzed:'Analyzed',refresh:'Refresh'}};function t(k){return (LOCALE[lang.value]||LOCALE.zh)[k]||k}
+const lang=ref('zh');const LOCALE={zh:{eyebrow:'论文分析平台',title:'研究论文深度分析工作台',subtitle:'上传 PDF 即可自动翻译、四维分析、公式解读与可视化。',api:'API',analyzed:'已分析',refresh:'刷新'},en:{eyebrow:'Paper Analysis Platform',title:'Research Paper Analysis Workbench',subtitle:'Upload PDF for auto translation, 4D analysis, formula explanation & visualization.',api:'API',analyzed:'Analyzed',refresh:'Refresh'}};function t(k){return (LOCALE[lang.value]||LOCALE.zh)[k]||k}
 const askQ=ref('');const askA=ref('')
 const totalFormulas=computed(()=>papers.value.reduce((s,p)=>s+(p.formula_count||0),0))
 const totalFigures=computed(()=>papers.value.reduce((s,p)=>s+(p.figure_count||0),0))
 const canSubmit=computed(()=>(upMode.value==='file'&&upFile.value)||(upMode.value==='text'&&upText.value.trim().length>50))
-const hasAnyResult=computed(()=>{const p=pdet.value;if(!p)return false;return !!(p.translation||p.system_model||p.problem_formulation||p.optimization_algorithm||p.experiment_design||p.formula_explanations||p.visualization_html||p.audit)})
+const hasAnyResult=computed(()=>{const p=pdet.value;if(!p)return false;return !!(p.translation||p.system_model||p.problem_formulation||p.optimization_algorithm||p.experiment_design||p.formula_explanations||p.visualization_html)})
 
 async function api(url,opts={}){const res=await fetch(url,{...opts,...(opts.body instanceof FormData?{}:{headers:{'Content-Type':'application/json',...(opts.headers||{})}})});if(!res.ok)throw new Error(await res.text());return res.json()}
 
@@ -259,12 +259,16 @@ async function pollProgress(){
       const si=STAGES.findIndex(x=>x.id===p.stage),ci=STAGES.findIndex(x=>x.id===s.id)
       return{...s,s:ci<si?'done':'pending'}
     })
-    if(p.stage==='audit'&&p.status==='completed'){
+    if(p.stage==='review'&&p.status==='completed'){
       clearInterval(_pollTimer);_pollTimer=null;uploading.value=false
       upStatus.value='分析完成！';await loadPapers()
     }
   }catch(e){progressMsg.value='轮询失败: '+e.message;console.error('pollProgress',e)}}
-function retypeset(){if(window.MathJax)MathJax.typesetPromise();if(window.mermaid)try{mermaid.run({querySelector:'.mermaid'})}catch(e){}}
+let _mjRetries=0
+function retypeset(){if(window.MathJax&&window.MathJax.typesetPromise){try{MathJax.typesetPromise()}catch(e){console.error('MathJax typeset error:',e)}_mjRetries=0}
+else if(_mjRetries<30){_mjRetries++;setTimeout(retypeset,500)}
+if(window.mermaid)try{mermaid.run({querySelector:'.mermaid'})}catch(e){}}
+document.addEventListener('MathJax:ready',()=>{_mjRetries=0;retypeset()})
 function retypesetDeferred(){nextTick(()=>{requestAnimationFrame(()=>{retypeset()})})}
 function renderAll(t){let h=renderMd(t);retypesetDeferred();return h}
 function sanitizeLatex(s){return s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,"").replace(/#/g,'\\#').replace(/%/g,'\\%').replace(/~/g,'\\textasciitilde{}').replace(/[“”]/g,'"').replace(/[‘’]/g,"'").replace(/ /g,' ')}
@@ -282,9 +286,9 @@ async function openPaper(pid){clearPoll()
 async function pollDetailProgress(){if(!curPaperId.value)return
   try{const p=await api(`/api/paper/${curPaperId.value}/progress`)
     pStages.value=STAGES.map(s=>{if(s.id===p.stage)return{...s,s:p.status==='completed'?'done':'active'};const si=STAGES.findIndex(x=>x.id===p.stage),ci=STAGES.findIndex(x=>x.id===s.id);return{...s,s:ci<si?'done':'pending'}})
-    if(p.stage==='audit'&&p.status==='completed'){clearPoll();pdet.value=await api(`/api/paper/${curPaperId.value}`);retypesetDeferred()}}catch(e){/*ignore*/}}
+    if(p.stage==='review'&&p.status==='completed'){clearPoll();pdet.value=await api(`/api/paper/${curPaperId.value}`);retypesetDeferred()}}catch(e){/*ignore*/}}
 async function doExport(){if(!pdet.value||!pdet.value.paper_id)return;const a=document.createElement('a');a.href=`/api/paper/${pdet.value.paper_id}/export`;a.download=`${pdet.value.paper_id}_analysis.zip`;a.click()}
-function exportArtifact(pid, atype, label){const a=document.createElement('a');a.href=`/api/paper/${pid}/export/${atype}`;const ext=atype==='visualization'||atype==='citation_graph'?'.html':atype==='audit'?'.json':'.md';a.download=(label||atype)+ext;a.click()}
+function exportArtifact(pid, atype, label){const a=document.createElement('a');a.href=`/api/paper/${pid}/export/${atype}`;const ext=atype==='visualization'||atype==='citation_graph'?'.html':'.md';a.download=(label||atype)+ext;a.click()}
 async function delPaper(pid){if(!confirm('确认删除？'))return;try{await fetch(`/api/paper/${pid}`,{method:'DELETE'});await loadPapers();pdet.value=null}catch(e){console.error(e)}}
 function toggleSelectPaper(pid){const s=new Set(selectedPapers.value);if(s.has(pid))s.delete(pid);else s.add(pid);selectedPapers.value=s}
 function selectAllPapers(){if(selectedPapers.value.size===papers.value.length){selectedPapers.value=new Set()}else{selectedPapers.value=new Set(papers.value.map(p=>p.paper_id))}}
@@ -385,188 +389,6 @@ function insMd(before,after){const ta=document.querySelector('.editor-textarea')
 function syncScroll(fromPreview){const ed=document.querySelector('.editor-textarea'),pv=document.querySelector('.pc');if(!ed||!pv)return;if(fromPreview){ed.scrollTop=(pv.scrollTop/(pv.scrollHeight-pv.clientHeight))*(ed.scrollHeight-ed.clientHeight)}else{pv.scrollTop=(ed.scrollTop/(ed.scrollHeight-ed.clientHeight))*(pv.scrollHeight-pv.clientHeight)}}
 function fmtSize(bytes){if(!bytes)return'0 B';const u=['B','KB','MB','GB'];let i=0,s=bytes;while(s>=1024&&i<u.length-1){s/=1024;i++}return s.toFixed(i===0?0:1)+' '+u[i]}
 function fmtJson(a){try{return JSON.stringify(typeof a==='string'?JSON.parse(a):a,null,2)}catch{return String(a)}}
-	function renderAudit(raw){
-		if(!raw) return '<div class="empty">暂无审计数据。</div>';
-		var d;
-		try { d = typeof raw === 'string' ? JSON.parse(raw) : raw; }
-		catch(e) { return '<div class="empty">审计数据格式错误。</div>'; }
-		if(!d || !Array.isArray(d.issues)) return '<div class="empty">暂无审计数据。</div>';
-
-		if(d.overall_score !== undefined && d.dimension_scores) {
-			return _renderAuditNew(d);
-		}
-		return _renderAuditLegacy(d);
-	}
-	function _renderAuditLegacy(d){
-		var issues = d.issues;
-		var passed = d.passed !== false;
-		var SEV = {
-			'严重': { border: '#ff4757', bg: 'rgba(255,71,87,.04)' },
-			'一般': { border: '#e8950a', bg: 'rgba(255,165,2,.04)' },
-			'建议': { border: '#5b66fa', bg: 'rgba(55,66,250,.04)' }
-		};
-
-		var counts = { '严重': 0, '一般': 0, '建议': 0 };
-		for(var i = 0; i < issues.length; i++) {
-			var s = issues[i].severity;
-			counts[SEV[s] ? s : '建议']++;
-		}
-
-		var bc = passed ? 'audit-pass' : 'audit-fail';
-		var icon = passed ? '&#10003;' : '&#10007;';
-		var tt = passed ? (issues.length ? '审计通过（有建议）' : '审计通过') : '审计未通过';
-		var sub = passed
-			? ('共 ' + issues.length + ' 项：<span class="asev-chip asev-crit">' + counts['严重'] + '</span><span class="asev-chip asev-warn">' + counts['一般'] + '</span><span class="asev-chip asev-info">' + counts['建议'] + '</span>')
-			: (counts['严重'] + ' 项严重问题需立即修复，共 ' + issues.length + ' 项问题待处理');
-
-		var h = '<div class="audit-banner ' + bc + '"><div class="audit-banner-icon">' + icon + '</div><div><div class="audit-banner-title">' + tt + '</div><div class="audit-banner-sub">' + sub + '</div></div></div>';
-
-		if(!issues.length) {
-			h += '<div style="text-align:center;padding:var(--s-8)"><div style="width:48px;height:48px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;background:rgba(0,200,117,.18);color:#00c875;margin-bottom:var(--s-3)">&#10003;</div><p style="font-size:16px;color:var(--c-text);margin:0 0 4px">一切正常</p><p style="font-size:13px;color:var(--c-text-muted);margin:0">未发现任何质量问题，全部检查均已通过。</p></div>';
-			return h;
-		}
-
-		var gr = { '严重': [], '一般': [], '建议': [] };
-		for(var i = 0; i < issues.length; i++) {
-			var iss = issues[i];
-			var sv = iss.severity;
-			(gr[SEV[sv] ? sv : '建议']).push(iss);
-		}
-
-		var sevs = ['严重', '一般', '建议'];
-		for(var gi = 0; gi < sevs.length; gi++) {
-			var sev = sevs[gi];
-			var list = gr[sev];
-			if(!list.length) continue;
-			var m = SEV[sev];
-			h += '<div class="asev-group"><div class="asev-head" style="color:' + m.border + '">' + sev + ' &middot; ' + list.length + ' 项</div>';
-			for(var j = 0; j < list.length; j++) {
-				var iss = list[j];
-				var isLLM = iss.dimension === 'LLM审计';
-				var dim = String(iss.dimension || '未知维度').replace(/&/g, '&amp;').replace(/</g, '&lt;');
-				var dh = isLLM
-					? renderMd(iss.detail || '')
-					: String(iss.detail || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-				h += '<div class="audit-issue" style="border-left:3px solid ' + m.border + ';background:' + m.bg + '"><div class="audit-issue-dim">' + dim + '</div><div class="audit-issue-detail">' + dh + '</div>';
-				if(iss.fix) h += '<div class="audit-issue-fix">&#9888; 修复建议：' + String(iss.fix).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
-				h += '</div>';
-			}
-			h += '</div>';
-		}
-		retypesetDeferred();
-		return h;
-	}
-	function _renderAuditNew(d){
-		var issues = d.issues;
-		var passed = d.passed !== false;
-		var SEV = {
-			'严重': { border: '#ff4757', bg: 'rgba(255,71,87,.04)' },
-			'一般': { border: '#e8950a', bg: 'rgba(255,165,2,.04)' },
-			'建议': { border: '#5b66fa', bg: 'rgba(55,66,250,.04)' }
-		};
-		var GRADES = {
-			'A': { bg: 'rgba(34,197,94,.12)', border: '#22c55e', text: '#4ade80' },
-			'B': { bg: 'rgba(99,102,241,.12)', border: '#6366f1', text: '#818cf8' },
-			'C': { bg: 'rgba(245,158,11,.12)', border: '#f59e0b', text: '#fbbf24' },
-			'D': { bg: 'rgba(249,115,22,.12)', border: '#f97316', text: '#fb923c' },
-			'F': { bg: 'rgba(239,68,68,.12)', border: '#ef4444', text: '#f87171' },
-		};
-
-		var h = '';
-
-		// ── Grade Badge ──
-		var grade = d.overall_grade || '?';
-		var g = GRADES[grade] || { bg: 'rgba(255,255,255,.06)', border: 'rgba(255,255,255,.15)', text: 'var(--c-text-muted)' };
-		h += '<div class="audit-grade" style="background:' + g.bg + ';border-color:' + g.border + ';color:' + g.text + '">' + grade + '</div>';
-
-		// ── Score Bar ──
-		var score = d.overall_score || 0;
-		var sc = score >= 90 ? '#4ade80' : score >= 70 ? '#818cf8' : score >= 50 ? '#fbbf24' : '#f87171';
-		h += '<div class="audit-scorebar">';
-		h += '<div class="audit-scorebar-track"><div class="audit-scorebar-fill" style="width:' + score + '%;background:' + sc + '"></div></div>';
-		h += '<span class="audit-scorebar-label" style="color:' + sc + '">' + score + '/100</span>';
-		h += '</div>';
-
-		// ── Pass/Fail Banner ──
-		var bc = passed ? 'audit-pass' : 'audit-fail';
-		var icon = passed ? '&#10003;' : '&#10007;';
-		var tt = passed ? (issues.length ? '审计通过（有建议）' : '审计通过') : '审计未通过';
-		h += '<div class="audit-banner ' + bc + '" style="margin-bottom:var(--s-4)"><div class="audit-banner-icon">' + icon + '</div><div><div class="audit-banner-title">' + tt + '</div><div class="audit-banner-sub">' + (d.summary ? d.summary.replace(/&/g,'&amp;').replace(/</g,'&lt;').slice(0,120) : '') + '</div></div></div>';
-
-		// ── Dimension Score Cards ──
-		var ds = d.dimension_scores || {};
-		var dimMap = [
-			{ key: 'translation_completeness', label: '翻译完整性' },
-			{ key: 'formula_completeness', label: '公式完整性' },
-			{ key: 'analysis_coverage', label: '分析覆盖度' },
-			{ key: 'consistency', label: '一致性' },
-			{ key: 'overall_quality', label: '综合质量' },
-		];
-		h += '<div class="audit-dimcards">';
-		for(var i = 0; i < dimMap.length; i++) {
-			var dm = dimMap[i];
-			var dv = typeof ds[dm.key] === 'number' ? ds[dm.key] : 0;
-			var dc = dv >= 90 ? '#4ade80' : dv >= 70 ? '#818cf8' : dv >= 50 ? '#fbbf24' : '#f87171';
-			h += '<div class="audit-dimcard">';
-			h += '<div class="audit-dimcard-label">' + dm.label + '</div>';
-			h += '<div class="audit-dimcard-bar"><div class="audit-dimcard-fill" style="width:' + dv + '%;background:' + dc + '"></div></div>';
-			h += '<div class="audit-dimcard-score" style="color:' + dc + '">' + dv + '</div>';
-			h += '</div>';
-		}
-		h += '</div>';
-
-		// ── Issue Statistics ──
-		var counts = { '严重': 0, '一般': 0, '建议': 0 };
-		for(var i2 = 0; i2 < issues.length; i2++) {
-			var s2 = issues[i2].severity;
-			counts[SEV[s2] ? s2 : '建议']++;
-		}
-		h += '<div class="audit-stats">';
-		h += '<span class="asev-chip asev-crit">严重 ' + counts['严重'] + '</span>';
-		h += '<span class="asev-chip asev-warn">一般 ' + counts['一般'] + '</span>';
-		h += '<span class="asev-chip asev-info">建议 ' + counts['建议'] + '</span>';
-		h += '<span style="font-size:12px;color:var(--c-text-muted);margin-left:auto">共 ' + issues.length + ' 项问题</span>';
-		h += '</div>';
-
-		// ── Issue List ──
-		if(issues.length) {
-			var gr = { '严重': [], '一般': [], '建议': [] };
-			for(var i3 = 0; i3 < issues.length; i3++) {
-				var iss3 = issues[i3];
-				var sv3 = iss3.severity;
-				(gr[SEV[sv3] ? sv3 : '建议']).push(iss3);
-			}
-			var sevs = ['严重', '一般', '建议'];
-			for(var gi = 0; gi < sevs.length; gi++) {
-				var sev = sevs[gi];
-				var list = gr[sev];
-				if(!list.length) continue;
-				var m = SEV[sev];
-				h += '<div class="asev-group"><div class="asev-head" style="color:' + m.border + '">' + sev + ' &middot; ' + list.length + ' 项</div>';
-				for(var j = 0; j < list.length; j++) {
-					var iss = list[j];
-					var dim = String(iss.dimension || '未知维度').replace(/&/g, '&amp;').replace(/</g, '&lt;');
-					h += '<div class="audit-issue" style="border-left:3px solid ' + m.border + ';background:' + m.bg + '">';
-					h += '<div class="audit-issue-dim">' + dim + '</div>';
-					h += '<div class="audit-issue-detail">' + renderMd(iss.detail || '') + '</div>';
-					if(iss.fix) h += '<div class="audit-issue-fix">&#9888; 修复建议：' + String(iss.fix).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
-					h += '</div>';
-				}
-				h += '</div>';
-			}
-		} else {
-			h += '<div style="text-align:center;padding:var(--s-6)"><div style="width:48px;height:48px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;background:rgba(0,200,117,.18);color:#00c875;margin-bottom:var(--s-3)">&#10003;</div><p style="font-size:16px;color:var(--c-text);margin:0 0 4px">一切正常</p><p style="font-size:13px;color:var(--c-text-muted);margin:0">未发现任何质量问题，全部检查均已通过。</p></div>';
-		}
-
-		// ── Summary ──
-		if(d.summary) {
-			h += '<div class="audit-summary">' + renderMd(d.summary) + '</div>';
-		}
-
-		retypesetDeferred();
-		return h;
-	}
-
 
 // Existing
 async function loadAll(){try{apiOk.value=true;apiStatus.value='在线';await Promise.all([loadRagPapers(),loadPapers()])}catch{apiOk.value=false;apiStatus.value='离线'}}

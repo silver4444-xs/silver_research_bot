@@ -110,32 +110,31 @@ def _check_formula_count(
 
 
 def _parse_llm_audit_json(content: str) -> dict | None:
-    """解析 LLM 响应中的 JSON，处理常见格式问题。"""
+    """Parse LLM response JSON, handling common formatting issues."""
     import json as _json
 
     text = content.strip()
 
-    # 去除 markdown 代码块标记
-    if text.startswith("```"):
-        lines = text.split("\n")
-        if lines and lines[0].strip() in ("```json", "```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
+    # Strip ```json / ``` code fences anywhere in the response
+    m = re.search(r"```(?:json)?\s*\n([\s\S]*?)\n```", text)
+    if m:
+        text = m.group(1).strip()
 
-    # 直接解析
+    # Try direct parse first
     try:
         return _json.loads(text)
     except _json.JSONDecodeError:
         pass
 
-    # 尝试从文本中提取 JSON (第一个 { 到最后一个 })
+    # Extract from first { to last } and attempt repair
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
+        candidate = text[start:end + 1]
+        # Remove trailing commas before ] or } (common LLM mistake)
+        candidate = re.sub(r",\s*([]}])", r"\1", candidate)
         try:
-            return _json.loads(text[start:end + 1])
+            return _json.loads(candidate)
         except _json.JSONDecodeError:
             pass
 

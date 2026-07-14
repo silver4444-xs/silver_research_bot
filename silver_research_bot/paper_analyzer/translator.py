@@ -24,7 +24,7 @@ async def translate_paper(
     full_text: str,
     provider: "LLMProvider",
     model: str,
-    chunk_size: int = 2000,
+    chunk_size: int = 3000,
     figures: list[dict] | None = None,
     tables: list[dict] | None = None,
     paper_id: str = "",
@@ -45,7 +45,7 @@ async def translate_paper(
 
     for i, (chunk, overlap) in enumerate(chunks):
         user_msg = _build_chunk_message(chunk, overlap, prev_summary, i, len(chunks))
-        req_tokens = max(4096, len(chunk) * 4)
+        req_tokens = min(max(6144, len(chunk) * 5), 131072)
         response = await provider.chat_with_retry(
             model=model,
             messages=[
@@ -56,9 +56,11 @@ async def translate_paper(
             max_tokens=req_tokens,
         )
         translated = response.content or ""
-        # Detect truncation: retry at 1/2 then 1/4 size
+        # Detect truncation: retry at 1/2 then 1/4 size.
+        # EN→ZH translations are naturally 30-50% of the source character count,
+        # so only lengths below 15% signal genuine truncation.
         finish = getattr(response, "finish_reason", "") or ""
-        if finish == "length" or (len(translated) > 10 and len(translated) < len(chunk) * 0.3):
+        if finish == "length" or (len(translated) > 10 and len(translated) < len(chunk) * 0.15):
             for level, fraction in [(1, 2), (2, 4)]:
                 chunk_log.append(f"chunk {i+1}/{len(chunks)} 截断，L{level}重试(1/{fraction})...")
                 paras = chunk.split("\n\n")
@@ -74,7 +76,7 @@ async def translate_paper(
                             {"role": "user", "content": retry_msg},
                         ],
                         tools=None,
-                        max_tokens=max(4096, len(smaller) * 4),
+                        max_tokens=min(max(6144, len(smaller) * 5), 131072),
                     )
                     if rr.content and len(rr.content) > len(translated) * 1.2:
                         translated = rr.content
@@ -146,6 +148,16 @@ def _build_chunks(paragraphs: list[str], max_size: int) -> list[tuple[str, str]]
     cur_size = 0
     for para in paragraphs:
         ps = len(para)
+        # Force-split oversized paragraphs to prevent max_tokens overflow
+        if ps > max_size * 2:
+            for start in range(0, ps, max_size):
+                if current:
+                    raw_chunks.append("\n\n".join(current))
+                    current = []
+                    cur_size = 0
+                current.append(para[start:start + max_size])
+                cur_size = len(para[start:start + max_size])
+            continue
         if current and cur_size + ps > max_size:
             raw_chunks.append("\n\n".join(current))
             current = [para]
