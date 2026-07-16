@@ -210,8 +210,16 @@ def _normalize_for_dedup(para: str) -> str:
     return p.strip().lower()
 
 
+_PLACEHOLDER_ONLY_RE = re.compile(r"^\s*◈\s*[A-Z]+\s*_\d+\s*◈\s*$")
+
+
 def _deduplicate_paragraphs(text: str) -> str:
-    """Detect and merge duplicate paragraphs within a 5-paragraph sliding window."""
+    """Detect and merge duplicate paragraphs within a 5-paragraph sliding window.
+
+    Placeholder-only paragraphs (◈FIG_N◈ / ◈TBL_N◈) are always dedup-eligible
+    regardless of length, preventing the LLM from spamming the same placeholder
+    across consecutive empty lines.
+    """
     paragraphs = text.split("\n\n")
     if len(paragraphs) < 2:
         return text
@@ -226,7 +234,8 @@ def _deduplicate_paragraphs(text: str) -> str:
             kept.append(para)
             continue
         norm = _normalize_for_dedup(stripped)
-        if len(norm) < 20:
+        is_placeholder_only = bool(_PLACEHOLDER_ONLY_RE.match(stripped))
+        if len(norm) < 20 and not is_placeholder_only:
             kept.append(para)
             seen_hashes[norm] = i
             continue
@@ -836,7 +845,10 @@ def _wrap_bare_latex_commands(text: str) -> str:
 
 
 def _embed_figures_tables(text: str, figures: list[dict], tables: list[dict], paper_id: str = "") -> str:
-    """将 ◈FIG_N◈ / ◈TBL_N◈ 不透明占位符替换为 Markdown 图片/表格引用。"""
+    """将 ◈FIG_N◈ / ◈TBL_N◈ 不透明占位符替换为 Markdown 图片/表格引用。
+
+    每个占位符仅替换 FIRST 出现。后续重复出现视为 LLM 幻觉/复制，在清理阶段移除。
+    """
     import re
     from pathlib import Path as _Path
 
@@ -849,7 +861,9 @@ def _embed_figures_tables(text: str, figures: list[dict], tables: list[dict], pa
         # Fuzzy match: LLM may slightly corrupt the placeholder during translation
         fuzzy = rf"◈\s*F\s*I\s*G\s*_{idx}\s*◈"
         found = re.search(fuzzy, text)
-        actual_placeholder = found.group(0) if found else opq
+        if not found:
+            continue
+        actual_placeholder = found.group(0)
         img_path = fig.get("image_path", "")
         img_exists = bool(img_path and _Path(img_path).exists())
         rel = fig.get("image_rel_path", "")
@@ -878,7 +892,7 @@ def _embed_figures_tables(text: str, figures: list[dict], tables: list[dict], pa
             )
         else:
             replacement = f"\n> 🖼 **图{idx}**：{caption}\n"
-        text = text.replace(actual_placeholder, replacement)
+        text = text.replace(actual_placeholder, replacement, 1)
 
     for tbl in tables:
         idx = tbl.get("index", 0)
@@ -888,9 +902,10 @@ def _embed_figures_tables(text: str, figures: list[dict], tables: list[dict], pa
             replacement = f"\n**表{idx}**\n\n{md_table}\n"
         else:
             replacement = f"\n> **表{idx}**\n"
-        text = text.replace(ph, replacement)
+        text = text.replace(ph, replacement, 1)
 
     # Validate: warn if any figure/table placeholders were lost in translation
+    # (check BEFORE cleanup so we don't mistake orphan-cleanup for loss)
     lost_figs = [str(f["index"]) for f in figures
                  if re.search(rf"◈FIG_{f['index']}◈", text)]
     lost_tbls = [str(t["index"]) for t in tables
@@ -900,6 +915,14 @@ def _embed_figures_tables(text: str, figures: list[dict], tables: list[dict], pa
         warnings.append(f"图{','.join(lost_figs)}（占位符丢失）")
     if lost_tbls:
         warnings.append(f"表{','.join(lost_tbls)}（占位符丢失）")
+
+    # Clean up orphaned placeholder duplicates (LLM hallucinations / repeated copies)
+    orphan_pattern = re.compile(r"\s*◈\s*[A-Z]+\s*_\d+\s*◈\s*")
+    orphan_matches = orphan_pattern.findall(text)
+    if orphan_matches:
+        text = orphan_pattern.sub("\n\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
     if warnings:
         text += "\n\n> ⚠️ 翻译后以下图表占位符丢失: " + "；".join(warnings)
     return text

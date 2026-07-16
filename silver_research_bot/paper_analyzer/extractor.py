@@ -649,6 +649,19 @@ def extract_pdf_text(pdf_path: str | Path, output_dir: str | Path | None = None)
 
     FIGURE_CAPTION_RE = re.compile(r"(?:^Fig\.?|^Figure|^图)\s*\d+", re.IGNORECASE)
 
+    # Min dimensions (points) for a content figure — smaller blocks are icons/decorations
+    MIN_FIG_WIDTH = 50
+    MIN_FIG_HEIGHT = 50
+    MIN_FIG_BYTES = 2000
+
+    # Author bio detection patterns (photos should not be content figures)
+    _AUTHOR_BIO_PATTERNS = [
+        re.compile(r"(?:received|obtained|earned)\s+(?:the|his|her)\s+(?:B\.S\.|M\.S\.|Ph\.D\.|Bachelor|Master|Doctor)", re.IGNORECASE),
+        re.compile(r"(?:is|was)\s+(?:an?\s+)?(?:assistant|associate|full)\s+professor", re.IGNORECASE),
+        re.compile(r"research\s+interests?\s+(?:include|are|focus|lie)", re.IGNORECASE),
+        re.compile(r"(?:IEEE|ACM)\s+(?:Senior\s+)?(?:Member|Fellow)", re.IGNORECASE),
+    ]
+
     for page_num in range(page_count):
         page = doc[page_num]
         blocks = page.get_text("dict")["blocks"]
@@ -658,10 +671,14 @@ def extract_pdf_text(pdf_path: str | Path, output_dir: str | Path | None = None)
 
         for i, block in enumerate(blocks):
             if block["type"] == 1:
-                figure_idx += 1
                 bbox = block.get("bbox", [0, 0, 0, 0])
                 w = block.get("width", 0)
                 h = block.get("height", 0)
+
+                # Skip tiny blocks (icons, decorative elements, PDF artifacts)
+                if w < MIN_FIG_WIDTH or h < MIN_FIG_HEIGHT:
+                    continue
+
                 caption = ""
                 # Heuristic caption detection: look at next few blocks
                 img_bottom = bbox[3] if len(bbox) > 3 else 0
@@ -679,25 +696,93 @@ def extract_pdf_text(pdf_path: str | Path, output_dir: str | Path | None = None)
                         if len(nb_text) < 300 and FIGURE_CAPTION_RE.search(nb_text):
                             caption = nb_text[:200]
                             break
-                placeholder = f"\n[图{figure_idx}：{caption or '见原文图' + str(figure_idx)}]\n"
+
+                # Detect author photos on last pages (not content figures)
+                is_author_photo = False
+                if page_num + 1 > page_count - 3:
+                    nearby_texts = []
+                    for j in range(max(0, i - 2), min(len(blocks), i + 5)):
+                        if j == i or blocks[j].get("type") != 0:
+                            continue
+                        nearby_texts.append(" ".join(
+                            s.get("text", "") for line in blocks[j].get("lines", [])
+                            for s in line.get("spans", [])
+                        ))
+                    combined = " ".join(nearby_texts)
+                    bio_hits = sum(1 for pat in _AUTHOR_BIO_PATTERNS if pat.search(combined))
+                    is_author_photo = bio_hits >= 2
+
+                if is_author_photo:
+                    placeholder = f"\n[Author Photo: {caption or 'author portrait'}]\n"
+                    page_text_parts.append(placeholder)
+                    figures.append({
+                        "index": -1, "page": page_num + 1,
+                        "bbox": bbox, "width": w, "height": h,
+                        "caption": caption, "placeholder": placeholder.strip(),
+                        "is_author_photo": True,
+                    })
+                    continue
+
+                # Export image: try original extraction first, fall back to screenshot
+                exported = False
+                if output_dir:
+                    try:
+                        fig_dir = Path(output_dir) / "figures"
+                        fig_dir.mkdir(parents=True, exist_ok=True)
+                        xref = block.get("number", 0)
+                        img_bytes = None
+                        img_ext = ".png"
+                        if xref:
+                            try:
+                                img_info = doc.extract_image(xref)
+                                img_bytes = img_info.get("image")
+                                img_ext = img_info.get("ext", "png")
+                                if not img_ext.startswith("."):
+                                    img_ext = f".{img_ext}"
+                            except Exception:
+                                img_bytes = None
+                        if img_bytes and len(img_bytes) >= MIN_FIG_BYTES:
+                            figure_idx += 1
+                            img_name = f"figure_{figure_idx}{img_ext}"
+                            (fig_dir / img_name).write_bytes(img_bytes)
+                            exported = True
+                        else:
+                            # Fallback: page screenshot
+                            try:
+                                pix = page.get_pixmap(clip=bbox, dpi=150)
+                                if pix.width > 0 and pix.height > 0:
+                                    figure_idx += 1
+                                    img_name = f"figure_{figure_idx}.png"
+                                    pix.save(str(fig_dir / img_name))
+                                    img_bytes = (fig_dir / img_name).read_bytes()
+                                    if len(img_bytes) >= MIN_FIG_BYTES:
+                                        exported = True
+                                    else:
+                                        (fig_dir / img_name).unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                else:
+                    # No output_dir: still count the figure (metadata-only mode)
+                    figure_idx += 1
+                    exported = True  # placeholder only
+
+                if not exported:
+                    continue
+
+                placeholder = f"\n[Fig {figure_idx}: {caption or 'see original Fig ' + str(figure_idx)}]\n"
                 page_text_parts.append(placeholder)
                 figures.append({
                     "index": figure_idx, "page": page_num + 1,
                     "bbox": bbox, "width": w, "height": h,
                     "caption": caption, "placeholder": placeholder.strip(),
                 })
-                # Export image to PNG if output_dir is specified
-                if output_dir:
-                    try:
-                        fig_dir = Path(output_dir) / "figures"
-                        fig_dir.mkdir(parents=True, exist_ok=True)
-                        pix = page.get_pixmap(clip=bbox, dpi=150)
-                        img_name = f"figure_{figure_idx}.png"
-                        pix.save(str(fig_dir / img_name))
-                        figures[-1]["image_path"] = str(fig_dir / img_name)
-                        figures[-1]["image_rel_path"] = f"figures/{img_name}"
-                    except Exception:
-                        pass
+                if output_dir and exported:
+                    fig_dir = Path(output_dir) / "figures"
+                    # img_name was set in the export block above
+                    figures[-1]["image_path"] = str(fig_dir / img_name)
+                    figures[-1]["image_rel_path"] = f"figures/{img_name}"
                 continue
 
             if block["type"] != 0:
@@ -811,7 +896,7 @@ def extract_pdf_text(pdf_path: str | Path, output_dir: str | Path | None = None)
                     continue
                 table_idx += 1
                 md_table = _cells_to_markdown_table(cells)
-                page_text_parts.append(f"\n[表{table_idx}]\n{md_table}\n")
+                page_text_parts.append(f"\n[Table {table_idx}]\n{md_table}\n")
                 tables.append({
                     "index": table_idx, "page": page_num + 1,
                     "bbox": list(t.bbox) if t.bbox else [],
@@ -908,6 +993,24 @@ def _extract_fallback(pdf_path: Path) -> dict[str, Any]:
     }
 
 
+def _detect_language(text: str) -> str:
+    """Detect paper language using CJK-to-alpha ratio, not absolute count.
+
+    An absolute threshold (100 chars) produced false positives because the
+    extractor's own figure/table placeholders injected CJK characters into
+    English papers.  Ratio-based detection with a floor of 200 CJK chars
+    avoids that class of error.
+    """
+    cjk_count = len(_CJK_CHARS_RE.findall(text))
+    alpha_count = sum(1 for c in text if c.isascii() and c.isalpha())
+    total = cjk_count + alpha_count
+    if total == 0:
+        return "en"
+    if cjk_count >= 200 and cjk_count / total > 0.20:
+        return "zh"
+    return "en"
+
+
 def extract_paper_meta(file_path: str | Path, workspace: str | Path) -> dict[str, Any]:
     """提取论文元数据，保存文件到工作区。支持 PDF 和纯文本(.txt/.md)。"""
     path = Path(file_path)
@@ -925,8 +1028,7 @@ def extract_paper_meta(file_path: str | Path, workspace: str | Path) -> dict[str
 
     extracted = extract_pdf_text(path, output_dir=paper_dir)
     full_text = extracted.get("full_text", "")
-    chinese_chars = sum(1 for c in full_text if '一' <= c <= '鿿')
-    language = "zh" if chinese_chars > 100 else "en"
+    language = _detect_language(full_text)
     lines = [l.strip() for l in full_text[:800].split("\n") if l.strip()]
     title = lines[0] if lines else path.stem
     if len(title) < 10 and len(lines) > 1:
@@ -950,8 +1052,7 @@ def _extract_text_paper(path: Path, paper_id: str, workspace: str | Path) -> dic
     if not full_text.strip():
         raise ValueError("论文内容为空")
 
-    chinese_chars = sum(1 for c in full_text if '一' <= c <= '鿿')
-    language = "zh" if chinese_chars > 100 else "en"
+    language = _detect_language(full_text)
 
     lines = [l.strip() for l in full_text[:800].split("\n") if l.strip()]
     title = lines[0] if lines else path.stem

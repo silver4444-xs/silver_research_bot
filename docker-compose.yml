@@ -1,0 +1,37 @@
+# =============================================================================
+# silver_research_bot — Docker Compose 部署
+# =============================================================================
+# 使用方式:
+#   1. cp .env.example .env 并填入 API Key
+#   2. docker compose build
+#   3. docker compose up -d
+#   4. 访问 http://localhost:8765
+# =============================================================================
+
+services:
+  silver-research-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: silver-research-bot:latest
+    container_name: silver-research-bot
+    ports:
+      - "8765:8765"
+    env_file:
+      - .env
+    environment:
+      - silver_research_bot_WORKSPACE_DIR=/home/silver/.silver_research_bot/workspace
+    volumes:
+      # 持久化工作区 (论文产物、RAG索引、阅读历史等)
+      - silver_workspace:/home/silver/.silver_research_bot/workspace
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8765/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  silver_workspace:
+    name: silver_workspace

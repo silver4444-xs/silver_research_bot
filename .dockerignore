@@ -1,0 +1,46 @@
+# Node
+web/node_modules/
+web/dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Env (use .env file explicitly, never baked into image)
+.env
+.env.*
+
+# Docs & Misc
+docs/
+*.md
+!README.md
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Workspace data (mounted as volume)
+workspace/
