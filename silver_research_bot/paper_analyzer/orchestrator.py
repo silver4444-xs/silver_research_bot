@@ -90,10 +90,13 @@ class PaperOrchestrator:
             self._write_progress(paper_dir, "translate", "running", "正在翻译全文（公式→LaTeX）…")
             _mark(plan, "translate", "running")
             with trace_pipeline_stage("translate", paper_id=meta_dict["paper_id"]) as tr_run:
-                translation = await translate_paper(full_text, self.provider, self.model, figures=figures, tables=tables, paper_id=meta_dict["paper_id"])
+                translation, chunk_log = await translate_paper(full_text, self.provider, self.model, figures=figures, tables=tables, paper_id=meta_dict["paper_id"])
                 if tr_run is not None:
                     tr_run.outputs = {"chars": len(translation), "paper_id": meta_dict["paper_id"]}
             (paper_dir / "translation.md").write_text(translation, encoding="utf-8")
+            if chunk_log:
+                log_path = paper_dir / "translation_log.md"
+                log_path.write_text("\n".join(chunk_log), encoding="utf-8")
             analysis.translation = translation
             artifacts.append({
                 "name": "translation.md",

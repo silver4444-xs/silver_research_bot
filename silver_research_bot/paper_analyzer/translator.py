@@ -20,6 +20,234 @@ if TYPE_CHECKING:
     from silver_research_bot.providers.base import LLMProvider
 
 
+def _normalize_placeholders(text: str, figures: list[dict], tables: list[dict]) -> tuple[str, list[dict], list[dict]]:
+    """将提取器的 [Fig N: caption] / [Table N] 转为不透明占位符 ◈FIG_N◈ / ◈TBL_N◈。
+
+    提取器在 full_text 中产生人类可读的占位符，但系统提示词和
+    _embed_figures_tables() 期望的是不透明的菱形标记。
+    此函数在 LLM 翻译之前对齐格式。
+    """
+    import copy
+    figures = copy.deepcopy(figures)
+    tables = copy.deepcopy(tables)
+
+    for fig in figures:
+        idx = fig.get("index", 0)
+        text = re.sub(
+            rf"\[Fig\s+{idx}\s*:?\s*[^\]]*\]",
+            f"◈FIG_{idx}◈",
+            text,
+            flags=re.IGNORECASE,
+        )
+        fig["opaque_placeholder"] = f"◈FIG_{idx}◈"
+
+    for tbl in tables:
+        idx = tbl.get("index", 0)
+        text = re.sub(
+            rf"\[Table\s+{idx}\s*\]",
+            f"◈TBL_{idx}◈",
+            text,
+            flags=re.IGNORECASE,
+        )
+        tbl["placeholder"] = f"◈TBL_{idx}◈"
+
+    return text, figures, tables
+
+
+# ── Meta-commentary patterns that LLMs sometimes emit despite instructions ──
+_META_PATTERNS = [
+    re.compile(r"(?:以下|好的|OK|Sure|Here)[,，].*?(?:翻译|部分|translation).*?[：:]\s*", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^#{1,4}\s*翻译(?:结果|内容|文本|译文)?\s*$", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"^#{1,4}\s*第\s*\d+\s*/\s*\d+\s*部分\s*$", re.MULTILINE),
+    re.compile(r"^第\s*\d+\s*/\s*\d+\s*部分.*?(?:翻译)?\s*$", re.MULTILINE),
+    re.compile(r"^#{1,4}\s*(?:Translation|Chinese\s+Translation)\s*$", re.MULTILINE | re.IGNORECASE),
+]
+
+
+def _strip_meta_commentary(text: str) -> str:
+    """Remove LLM meta-commentary that leaked into translation output."""
+    for pat in _META_PATTERNS:
+        text = pat.sub("", text)
+    return text.strip()
+
+
+# ── English detection ──────────────────────────────────────────────────
+
+def _english_ratio(para: str) -> tuple[float, int]:
+    """Return (ascii_alpha_ratio, cjk_char_count) for a paragraph, excluding formulas."""
+    stripped = re.sub(r"\$\$[\s\S]*?\$\$", "", para)
+    stripped = re.sub(r"\$[^$\n]*?\$", "", stripped)
+    stripped = re.sub(r"◈[A-Z]+_\d+◈", "", stripped)
+    stripped = re.sub(r"</?[^>]+>", "", stripped)
+    ascii_alpha = len(re.findall(r"[a-zA-Z]", stripped))
+    cjk = len(re.findall(r"[一-鿿㐀-䶿]", stripped))
+    total = len(stripped.strip())
+    if total == 0:
+        return 0.0, 0
+    return ascii_alpha / total, cjk
+
+
+def _detect_untranslated_english(text: str) -> dict:
+    """Detect blocks of untranslated English in translation output.
+
+    Returns {"blocks": [{start, end, snippet, severity}], "summary": str}
+    """
+    paragraphs = text.split("\n\n")
+    flagged: list[dict] = []
+    i = 0
+    while i < len(paragraphs):
+        ratio, cjk = _english_ratio(paragraphs[i])
+        if ratio > 0.70 and cjk == 0 and len(paragraphs[i].strip()) > 50:
+            start = i
+            while i < len(paragraphs):
+                r, c = _english_ratio(paragraphs[i])
+                if r <= 0.70 or c > 0:
+                    break
+                i += 1
+            block_text = "\n\n".join(paragraphs[start:i])
+            block_len = len(block_text)
+            severity = "high" if block_len > 200 else "warning"
+            flagged.append({
+                "start": start,
+                "end": i,
+                "snippet": block_text[:200],
+                "length": block_len,
+                "severity": severity,
+            })
+        else:
+            i += 1
+
+    summary = ""
+    if flagged:
+        high = [b for b in flagged if b["severity"] == "high"]
+        warn = [b for b in flagged if b["severity"] == "warning"]
+        parts = []
+        if high:
+            parts.append(f"{len(high)} 个未翻译英文块（严重）")
+        if warn:
+            parts.append(f"{len(warn)} 个未翻译英文块（轻微）")
+        summary = "；".join(parts)
+    return {"blocks": flagged, "summary": summary}
+
+
+# ── Page artifact filtering ────────────────────────────────────────────
+
+_PAGE_ARTIFACT_PATTERNS = [
+    re.compile(r"^(?:\d+\s+)?VOLUME\s+\d+,\s*\d{4}\s*(?:\d+)?\s*$", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"^卷\s*\d+[,，]\s*\d{4}\s*\d*\s*$", re.MULTILINE),
+    re.compile(r"^DOI:\s*10\.\S+\s*$", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"^Digital\s+Object\s+Identifier\b.*$", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"^arXiv:\s*\d{4}\.\d+\s*$", re.MULTILINE | re.IGNORECASE),
+    re.compile(
+        r"^[A-Z][A-Z\s]{3,}(?:et\s+al\.?)?\s*[：:]\s*[A-Z][A-Z\s,/-]{10,}\s*$",
+        re.MULTILINE | re.IGNORECASE,
+    ),
+    re.compile(
+        r"^[A-Z][A-Z\s]{3,}(?:等)?[：:]\s*.{10,}\s*$",
+        re.MULTILINE,
+    ),
+]
+
+
+def _is_page_number_line(line: str) -> bool:
+    """Check if a line is likely a page number artifact."""
+    stripped = line.strip()
+    if not re.match(r"^\d{3,4}\s*$", stripped):
+        return False
+    num = int(stripped)
+    return 100 <= num <= 9999
+
+
+def _filter_page_artifacts_pre(text: str) -> str:
+    """Remove journal metadata artifacts BEFORE translation (English text)."""
+    for pat in _PAGE_ARTIFACT_PATTERNS:
+        text = pat.sub("", text)
+    lines = text.split("\n")
+    filtered = []
+    for i, line in enumerate(lines):
+        if _is_page_number_line(line):
+            prev_lower = lines[i - 1].strip().lower() if i > 0 else ""
+            next_lower = lines[i + 1].strip().lower() if i + 1 < len(lines) else ""
+            markers = ["volume", "ieee", "transactions", "journal", "vol.", "received", "accepted"]
+            if any(m in prev_lower or m in next_lower for m in markers):
+                continue
+        filtered.append(line)
+    return "\n".join(filtered)
+
+
+def _filter_page_artifacts_post(text: str) -> str:
+    """Remove journal metadata artifacts AFTER translation (Chinese text)."""
+    cn_header = re.compile(
+        r"^[A-Z][A-Z\s]{3,}(?:等)?[：:]\s*.{8,}\s*$",
+        re.MULTILINE,
+    )
+    text = cn_header.sub("", text)
+    text = re.sub(r"^卷\s*\d+[,，]\s*\d{4}\s*\d*\s*$", "", text, flags=re.MULTILINE)
+    lines = text.split("\n")
+    filtered = []
+    for i, line in enumerate(lines):
+        if _is_page_number_line(line):
+            prev_lower = lines[i - 1].strip().lower() if i > 0 else ""
+            next_lower = lines[i + 1].strip().lower() if i + 1 < len(lines) else ""
+            markers = ["volume", "ieee", "transactions", "journal", "vol.", "卷"]
+            if any(m in prev_lower or m in next_lower for m in markers):
+                continue
+        filtered.append(line)
+    return "\n".join(filtered)
+
+
+# ── Deduplication ──────────────────────────────────────────────────────
+
+def _normalize_for_dedup(para: str) -> str:
+    """Normalize paragraph for deduplication comparison."""
+    p = para.strip()
+    p = re.sub(r"^#{1,4}\s*", "", p)
+    p = re.sub(r"\$\$[\s\S]*?\$\$", "█MATH█", p)
+    p = re.sub(r"\$[^$\n]*?\$", "█INLINE█", p)
+    p = re.sub(r"◈[A-Z]+_\d+◈", "█PH█", p)
+    p = re.sub(r"\s+", " ", p)
+    p = re.sub(r"[，。！？、；：""''（）《》【】,.!?;:;\-]", "", p)
+    return p.strip().lower()
+
+
+def _deduplicate_paragraphs(text: str) -> str:
+    """Detect and merge duplicate paragraphs within a 5-paragraph sliding window."""
+    paragraphs = text.split("\n\n")
+    if len(paragraphs) < 2:
+        return text
+
+    kept: list[str] = []
+    seen_hashes: dict[str, int] = {}
+    dup_count = 0
+
+    for i, para in enumerate(paragraphs):
+        stripped = para.strip()
+        if not stripped:
+            kept.append(para)
+            continue
+        norm = _normalize_for_dedup(stripped)
+        if len(norm) < 20:
+            kept.append(para)
+            seen_hashes[norm] = i
+            continue
+
+        dup_idx = seen_hashes.get(norm)
+        if dup_idx is not None and (i - dup_idx) <= 5:
+            dup_count += 1
+            continue
+
+        seen_hashes[norm] = i
+        stale = [h for h, idx in seen_hashes.items() if i - idx > 5]
+        for h in stale:
+            del seen_hashes[h]
+        kept.append(para)
+
+    result = "\n\n".join(kept)
+    if dup_count:
+        result += f"\n\n> ⚠️ 翻译去重：已移除 {dup_count} 个疑似重复段落。\n"
+    return result
+
+
 async def translate_paper(
     full_text: str,
     provider: "LLMProvider",
@@ -28,13 +256,19 @@ async def translate_paper(
     figures: list[dict] | None = None,
     tables: list[dict] | None = None,
     paper_id: str = "",
-) -> str:
+) -> tuple[str, list[str]]:
     """将英文论文全文翻译为中文，公式转为 LaTeX Markdown。
 
-    按段落分块翻译，每块带前文摘要以保持连贯性（chunk_size=2000，防截断）。
+    按段落分块翻译，每块带前文摘要以保持连贯性（chunk_size=3000，防截断）。
     若提供 figures/tables 列表，翻译后自动将占位符替换为图片/表格引用。
+    返回 (translated_text, chunk_log_entries)。
     """
     system_prompt = render_template("paper/translator_system.md", strip=True)
+    if figures or tables:
+        full_text, figures, tables = _normalize_placeholders(
+            full_text, figures or [], tables or [],
+        )
+    full_text = _filter_page_artifacts_pre(full_text)
     paragraphs = _split_into_paragraphs(full_text)
     chunks = _build_chunks(paragraphs, chunk_size)
 
@@ -56,6 +290,48 @@ async def translate_paper(
             max_tokens=req_tokens,
         )
         translated = response.content or ""
+        translated = _strip_meta_commentary(translated)
+        # Detect and retry untranslated English blocks
+        eng_check = _detect_untranslated_english(translated)
+        if eng_check["blocks"]:
+            high_blocks = [b for b in eng_check["blocks"] if b["severity"] == "high"]
+            if high_blocks:
+                chunk_log.append(
+                    f"chunk {i+1}/{len(chunks)} 英文未翻译块({len(high_blocks)}处严重)，"
+                    f"追加指令重试..."
+                )
+                retry_msg = _build_chunk_message(
+                    chunk, overlap, prev_summary, i, len(chunks)
+                )
+                retry_msg += (
+                    "\n\n⚠️ 警告：上一个翻译结果中以下英文段落未被翻译。"
+                    "请完整翻译所有内容，不得保留英文原文：\n"
+                    + "\n---\n".join(b["snippet"] for b in high_blocks[:3])
+                )
+                try:
+                    rr = await provider.chat_with_retry(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": retry_msg},
+                        ],
+                        tools=None,
+                        max_tokens=req_tokens,
+                    )
+                    if rr.content and _detect_untranslated_english(rr.content)["blocks"]:
+                        rerun = _detect_untranslated_english(rr.content)
+                        if not any(b["severity"] == "high" for b in rerun["blocks"]):
+                            translated = _strip_meta_commentary(rr.content)
+                            chunk_log.append(f"chunk {i+1} 英文重试成功")
+                        else:
+                            chunk_log.append(f"chunk {i+1} 英文重试后仍存在未翻译块，已保留")
+                    elif rr.content:
+                        translated = _strip_meta_commentary(rr.content)
+                        chunk_log.append(f"chunk {i+1} 英文重试成功")
+                except Exception:
+                    chunk_log.append(f"chunk {i+1} 英文重试异常，保留原文")
+            else:
+                chunk_log.append(f"chunk {i+1} 英文未翻译块({eng_check['summary']})，已保留")
         # Detect truncation: retry at 1/2 then 1/4 size.
         # EN→ZH translations are naturally 30-50% of the source character count,
         # so only lengths below 15% signal genuine truncation.
@@ -89,17 +365,26 @@ async def translate_paper(
             prev_summary = _extract_key_points(translated)
 
     result = "\n\n".join(translated_chunks)
+    result = _strip_meta_commentary(result)
+    result = _filter_page_artifacts_post(result)
+    result = _deduplicate_paragraphs(result)
     result = _validate_formulas(result)
     result = _merge_formula_fragments(result)
     # Strip control characters (except tab, LF, CR) that break MathJax rendering.
     # NUL and SOH bytes are common PDF extraction artifacts embedded in math blocks.
     result = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", result)
+    result = _wrap_bare_latex_commands(result)
     if figures or tables:
         result = _embed_figures_tables(result, figures or [], tables or [], paper_id)
     result = _validate_translation_length(result, input_len)
-    if chunk_log:
-        result = "\n\n> 📋 翻译日志:\n> " + "\n> ".join(chunk_log) + "\n\n" + result
-    return result
+    # Final English block check on the complete output
+    final_eng = _detect_untranslated_english(result)
+    if final_eng["summary"]:
+        result += (
+            f"\n\n> ⚠️ 翻译完整性警告：最终输出中仍存在 {final_eng['summary']}。"
+            f" 请对比原文进行人工补译。\n"
+        )
+    return result, chunk_log
 
 
 def _split_into_paragraphs(text: str) -> list[str]:
@@ -138,6 +423,20 @@ def _split_into_paragraphs(text: str) -> list[str]:
     return result
 
 
+def _count_inline_dollars(text: str) -> int:
+    """统计文本中单 $ 的数量（排除 $$ 对）。"""
+    return text.count("$") - text.count("$$") * 2
+
+
+def _safe_para_split(text: str, target: int) -> int:
+    """在 target 附近找一个不在 $...$ 内的安全切分点。"""
+    before = text[:target]
+    if _count_inline_dollars(before) % 2 == 0:
+        return target  # 不在 $...$ 中
+    next_dollar = text.find("$", target)
+    return next_dollar + 1 if next_dollar != -1 else target
+
+
 def _build_chunks(paragraphs: list[str], max_size: int) -> list[tuple[str, str]]:
     """构建翻译块列表，每块为 (chunk_text, overlap_text)。
 
@@ -151,12 +450,15 @@ def _build_chunks(paragraphs: list[str], max_size: int) -> list[tuple[str, str]]
         # Force-split oversized paragraphs to prevent max_tokens overflow
         if ps > max_size * 2:
             for start in range(0, ps, max_size):
+                end = min(start + max_size, ps)
+                if end < ps:
+                    end = _safe_para_split(para, end)
                 if current:
                     raw_chunks.append("\n\n".join(current))
                     current = []
                     cur_size = 0
-                current.append(para[start:start + max_size])
-                cur_size = len(para[start:start + max_size])
+                current.append(para[start:end])
+                cur_size = len(para[start:end])
             continue
         if current and cur_size + ps > max_size:
             raw_chunks.append("\n\n".join(current))
@@ -184,33 +486,46 @@ def _build_chunks(paragraphs: list[str], max_size: int) -> list[tuple[str, str]]
         merged.append(chunk)
     raw_chunks = merged
 
-    # Build overlap pairs: chunk N gets last paragraph of chunk N-1 as context
-    result: list[tuple[str, str]] = [(raw_chunks[0], "")]
-    for i in range(1, len(raw_chunks)):
-        prev_paras = raw_chunks[i - 1].split("\n\n")
-        overlap = prev_paras[-1] if prev_paras else ""
-        result.append((raw_chunks[i], overlap))
+    # Second pass: merge chunks with unbalanced inline $...$ formulas.
+    merged2: list[str] = []
+    i = 0
+    while i < len(raw_chunks):
+        chunk = raw_chunks[i]
+        inline_count = _count_inline_dollars(chunk)
+        if inline_count % 2 == 1 and i + 1 < len(raw_chunks):
+            chunk = chunk + "\n\n" + raw_chunks[i + 1]
+            i += 2
+        else:
+            i += 1
+        merged2.append(chunk)
+    raw_chunks = merged2
+
+    # Build chunk list: overlap context is handled via prev_summary (Chinese) only.
+    # English overlap was causing LLMs to re-translate it, producing duplicate output.
+    result: list[tuple[str, str]] = [(c, "") for c in raw_chunks]
     return result
 
 
 
 def _build_chunk_message(chunk: str, overlap: str, prev: str, idx: int, total: int) -> str:
     parts = [f"## 翻译任务：第 {idx + 1}/{total} 部分\n"]
-    if overlap:
-        parts.append(f"上文末段（已翻译，仅作上下文参考，无需重复翻译）：\n{overlap}\n")
     if prev:
-        parts.append(f"前文整体摘要（供参考，无需翻译）：\n{prev}\n")
+        parts.append(f"上文核心内容（已翻译，仅供上下文参考，无需重复翻译）：\n{prev}\n")
     parts.append("请翻译以下英文论文内容为中文：\n")
     parts.append(chunk)
     return "\n".join(parts)
 
 
-def _extract_key_points(text: str, max_len: int = 300) -> str:
-    """提取翻译结果末尾的关键内容作为下一块的上下文摘要。"""
+def _extract_key_points(text: str, max_len: int = 500) -> str:
+    """提取翻译结果末尾的中文关键内容作为下一块的上下文摘要。"""
     lines = [l.strip() for l in text.split("\n") if l.strip()]
-    key = [l for l in lines if not l.startswith("$$") and not l.startswith("◈") and len(l) > 20]
-    # Use the last few meaningful lines (better context for next chunk)
-    return " ".join(key[-5:])[:max_len]
+    key = [
+        l for l in lines
+        if not l.startswith("$$") and not l.startswith("◈")
+        and not l.startswith("#") and len(l) > 15
+        and any('一' <= c <= '鿿' for c in l)
+    ]
+    return " ".join(key[-6:])[:max_len]
 
 
 def _count_formulas(text: str) -> int:
@@ -441,6 +756,35 @@ def _validate_formulas(translated: str) -> str:
         return sep + balanced + sep
     fixed = re.sub(r"\$\$(.+?)\$\$", _fix_block, fixed, flags=re.DOTALL)
     fixed = re.sub(r"(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)", _fix_block, fixed)
+    # Fix 6 (new): Detect corrupted set notation ($&$ instead of \mathcal{N})
+    _CORRUPTED_SET_RE = re.compile(r"\$&?\$|&?\$&?\$")
+    corrupted_sets = _CORRUPTED_SET_RE.findall(fixed)
+    if corrupted_sets:
+        fixed += (
+            f"\n\n> ⚠️ LaTeX 损坏警告：检测到 {len(corrupted_sets)} 处疑似损坏的集合符号 "
+            f"（`$&$` 或类似模式），这些应为 `\\mathcal{{N}}` 等命令。"
+            f" 请对比原文中的集合符号进行修复。\n"
+        )
+
+    # Detect stray commas inside math subscripts/superscripts
+    _STRAY_COMMA_IN_SUB_RE = re.compile(r"[_{^]\{[^}]*,[^}]*\}")
+    stray_commas = _STRAY_COMMA_IN_SUB_RE.findall(fixed)
+    if stray_commas:
+        unique = list(set(stray_commas))[:5]
+        fixed += (
+            f"\n\n> ⚠️ LaTeX 格式问题：检测到 {len(stray_commas)} 处下标/上标内含有"
+            f" 多余逗号（如 `{unique[0]}`），请手动检查并移除。\n"
+        )
+
+    # Detect broken display math: $$= ... -$$ pattern (garbled formula)
+    _BROKEN_DISPLAY = re.compile(r"\$\$\s*=\s*.{0,100}?\-\s*\$\$")
+    broken = _BROKEN_DISPLAY.findall(fixed)
+    if broken:
+        fixed += (
+            f"\n\n> ⚠️ LaTeX 公式损坏警告：检测到 {len(broken)} 处"
+            f" 可能已损坏的独立公式（`$$=` 或 `-$$` 模式），请手动对比原文修复。\n"
+        )
+
     # Check unbalanced $$ display math
     display_count = fixed.count("$$")
     if display_count % 2 != 0:
@@ -464,6 +808,31 @@ def _validate_translation_length(output: str, input_len: int) -> str:
             f"仅为原文 ({input_len} 字符) 的 {pct}%，可能存在漏翻。"
         )
     return output
+
+
+_UNWRAPPED_MATH_CMDS = re.compile(
+    r"(?<![$\\])\\(mathbf|mathcal|mathbb|boldsymbol|mathit|mathrm|mathsf|mathtt|operatorname)\{[^}]+\}(?!\$)"
+)
+
+
+def _wrap_bare_latex_commands(text: str) -> str:
+    """将翻译后未包裹的 LaTeX 数学命令（如 \\mathbf{X}）加上 $...$。
+
+    仅处理明确不会出现在自然语言中的数学字体命令。
+    已有 $...$ 或 $$...$$ 包裹的内容会被保护后跳过。
+    """
+    math_blocks: list[str] = []
+
+    def _protect(m: re.Match) -> str:
+        math_blocks.append(m.group(0))
+        return f"M{len(math_blocks) - 1}"
+
+    text = re.sub(r"\$\$[\s\S]*?\$\$", _protect, text)
+    text = re.sub(r"(?<!\$)\$[^$\n]+?\$(?!\$)", _protect, text)
+    text = _UNWRAPPED_MATH_CMDS.sub(r"$&$", text)
+    for i, block in enumerate(math_blocks):
+        text = text.replace(f"M{i}", block)
+    return text
 
 
 def _embed_figures_tables(text: str, figures: list[dict], tables: list[dict], paper_id: str = "") -> str:
