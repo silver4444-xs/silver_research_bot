@@ -146,6 +146,45 @@ _PAGE_ARTIFACT_PATTERNS = [
         r"^[A-Z][A-Z\s]{3,}(?:等)?[：:]\s*.{10,}\s*$",
         re.MULTILINE,
     ),
+    # IEEE journal header: "48336 IEEE INTERNET OF THINGS JOURNAL, VOL. 12, NO. 22, 15 NOVEMBER 2025"
+    re.compile(
+        r"^\d+\s+IEEE\s+[\w\s]+(?:JOURNAL|TRANSACTIONS|LETTERS|MAGAZINE)\s*,?\s*VOL\.\s*\d+\s*,?\s*NO\.\s*\d+\s*,?\s*\d{1,2}\s+\w+\s+\d{4}\s*$",
+        re.MULTILINE | re.IGNORECASE,
+    ),
+    # IEEE running header: "ZHANG et al.: JOINT TASK OFFLOADING ... 48337"
+    re.compile(
+        r"^[A-Z]{3,}(?:\s+et\s+al\.?)?\s*:\s*.+\s*\d{3,}\s*$",
+        re.MULTILINE,
+    ),
+    # IEEE copyright line 1: "Authorized licensed use limited to: ..."
+    re.compile(
+        r"^Authorized\s+licensed\s+use\s+limited\s+to:\s*.+\.?\s*$",
+        re.MULTILINE | re.IGNORECASE,
+    ),
+    # IEEE copyright line 2: "Downloaded on ... UTC from IEEE Xplore."
+    re.compile(
+        r"^Downloaded\s+on\s+.+?UTC\s+from\s+IEEE\s+Xplore\.?\s*$",
+        re.MULTILINE | re.IGNORECASE,
+    ),
+    # IEEE copyright line 3: "Restrictions apply."
+    re.compile(
+        r"^Restrictions\s+apply\.?\s*$",
+        re.MULTILINE | re.IGNORECASE,
+    ),
+    # IEEE copyright/ISSN: "$2327-4662$ (c)2025 IEEE ..."
+    re.compile(
+        r"^\$?\d{4}[-–]\d{4}\$?\s*.+IEEE[,;]?\s*(?:Personal\s+use\s+is\s+permitted\b.*)?$",
+        re.MULTILINE,
+    ),
+    # Sub-figure label orphans: "(a) (b) (c)" or "(a)-(c)"
+    re.compile(
+        r"^\s*(?:\([a-z]\)[\s,;]+)+(?:\([a-z]\))\s*$",
+        re.MULTILINE,
+    ),
+    re.compile(
+        r"^\s*\([a-z]\)\s*[-–—]\s*\([a-z]\)\s*$",
+        re.MULTILINE,
+    ),
 ]
 
 
@@ -160,6 +199,13 @@ def _is_page_number_line(line: str) -> bool:
 
 def _filter_page_artifacts_pre(text: str) -> str:
     """Remove journal metadata artifacts BEFORE translation (English text)."""
+    # Multi-line IEEE watermark: collapse the entire block across line breaks
+    text = re.sub(
+        r"Authorized\s+licensed\s+use\s+limited\s+to:\s*.+?Restrictions\s+apply\.?",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     for pat in _PAGE_ARTIFACT_PATTERNS:
         text = pat.sub("", text)
     lines = text.split("\n")
@@ -177,6 +223,39 @@ def _filter_page_artifacts_pre(text: str) -> str:
 
 def _filter_page_artifacts_post(text: str) -> str:
     """Remove journal metadata artifacts AFTER translation (Chinese text)."""
+    # Multi-line Chinese IEEE watermark
+    text = re.sub(
+        r"授权许可使用仅限于：.+?限制适用[。.]?",
+        "",
+        text,
+        flags=re.DOTALL,
+    )
+    # Single-line Chinese IEEE fragments
+    text = re.sub(
+        r"^授权许可使用仅限于：.+$",
+        "",
+        text,
+        flags=re.MULTILINE,
+    )
+    text = re.sub(
+        r"^下载于\s*\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日\s*.+?UTC[,，]?\s*来自\s*IEEE\s*Xplore[。.]?\s*$",
+        "",
+        text,
+        flags=re.MULTILINE,
+    )
+    text = re.sub(
+        r"^限制适用[。.]?\s*$",
+        "",
+        text,
+        flags=re.MULTILINE,
+    )
+    # Chinese IEEE journal header: "48336 IEEE 物联网杂志, 第12卷, 第22期, 2025年11月15日"
+    text = re.sub(
+        r"^\d+\s+IEEE\s+物联网杂志[,，]\s*第?\s*\d+\s*卷[,，]\s*第?\s*\d+\s*期[,，]\s*\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日\s*$",
+        "",
+        text,
+        flags=re.MULTILINE,
+    )
     cn_header = re.compile(
         r"^[A-Z][A-Z\s]{3,}(?:等)?[：:]\s*.{8,}\s*$",
         re.MULTILINE,
@@ -193,6 +272,56 @@ def _filter_page_artifacts_post(text: str) -> str:
             if any(m in prev_lower or m in next_lower for m in markers):
                 continue
         filtered.append(line)
+    return "\n".join(filtered)
+
+
+# ── Diagram label garbage filter ───────────────────────────────────────
+
+def _filter_diagram_label_garbage(text: str) -> str:
+    """Remove garbled text extracted from diagram/figure labels.
+
+    PDF extractors capture text labels from within figures (flowcharts,
+    architecture diagrams, etc.) as regular prose. These produce lines like:
+        "演员网络 / 评论家网络1 / 评论家网络2 / 目标演员网络"
+        "更新 更新 / 更新 / 1, L / 2, L / 1 Q / 2 Q"
+    which are not natural language and should be filtered pre-translation.
+    """
+    lines = text.split("\n")
+    filtered: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            filtered.append(line)
+            continue
+
+        # Heuristic 1: Slash-separated fragments (3+ segments, each ≤ 25 chars)
+        slash_parts = [p.strip() for p in stripped.split("/") if p.strip()]
+        if len(slash_parts) >= 3:
+            all_short = all(len(p) <= 25 for p in slash_parts)
+            has_sentence = bool(re.search(r"[.。!！?？]\s+[A-Z一-鿿]", stripped))
+            if all_short and not has_sentence:
+                continue
+
+        # Heuristic 2: Repeated identical short tokens (e.g. "更新 更新")
+        tokens = stripped.split()
+        if 3 <= len(tokens) <= 6:
+            seen: dict[str, int] = {}
+            for t in tokens:
+                seen[t] = seen.get(t, 0) + 1
+            if max(seen.values()) >= 2:
+                continue
+
+        # Heuristic 3: Mixed CJK/ASCII token soup (5+ tokens, mostly short)
+        if len(tokens) >= 5:
+            short_count = sum(1 for t in tokens if len(t) <= 3)
+            has_cjk = any(re.search(r"[一-鿿]", t) for t in tokens)
+            has_ascii = any(re.match(r"^[a-zA-Z0-9,]+$", t) for t in tokens)
+            no_punct = not re.search(r"[。.，,！!？?]", stripped)
+            if short_count >= 4 and has_cjk and has_ascii and no_punct:
+                continue
+
+        filtered.append(line)
+
     return "\n".join(filtered)
 
 
@@ -278,6 +407,7 @@ async def translate_paper(
             full_text, figures or [], tables or [],
         )
     full_text = _filter_page_artifacts_pre(full_text)
+    full_text = _filter_diagram_label_garbage(full_text)
     paragraphs = _split_into_paragraphs(full_text)
     chunks = _build_chunks(paragraphs, chunk_size)
 
@@ -287,7 +417,12 @@ async def translate_paper(
     chunk_log: list[str] = []
 
     for i, (chunk, overlap) in enumerate(chunks):
-        user_msg = _build_chunk_message(chunk, overlap, prev_summary, i, len(chunks))
+        prev_tail_en = ""
+        if i > 0:
+            prev_chunk_text = chunks[i - 1][0]
+            sentences = re.split(r"(?<=[.])\s+", prev_chunk_text)
+            prev_tail_en = " ".join(sentences[-2:]) if len(sentences) >= 2 else prev_chunk_text[-200:]
+        user_msg = _build_chunk_message(chunk, overlap, prev_summary, i, len(chunks), prev_tail_en)
         req_tokens = min(max(6144, len(chunk) * 5), 131072)
         response = await provider.chat_with_retry(
             model=model,
@@ -310,7 +445,7 @@ async def translate_paper(
                     f"追加指令重试..."
                 )
                 retry_msg = _build_chunk_message(
-                    chunk, overlap, prev_summary, i, len(chunks)
+                    chunk, overlap, prev_summary, i, len(chunks), prev_tail_en,
                 )
                 retry_msg += (
                     "\n\n⚠️ 警告：上一个翻译结果中以下英文段落未被翻译。"
@@ -352,7 +487,7 @@ async def translate_paper(
                 smaller = "\n\n".join(paras[:max(1, len(paras) // fraction)])
                 if len(smaller) >= len(chunk) * 0.8:
                     break
-                retry_msg = _build_chunk_message(smaller, overlap, prev_summary, i, len(chunks))
+                retry_msg = _build_chunk_message(smaller, overlap, prev_summary, i, len(chunks), prev_tail_en)
                 try:
                     rr = await provider.chat_with_retry(
                         model=model,
@@ -377,6 +512,7 @@ async def translate_paper(
     result = _strip_meta_commentary(result)
     result = _filter_page_artifacts_post(result)
     result = _deduplicate_paragraphs(result)
+    result = _dedup_chunk_boundaries(result)
     result = _validate_formulas(result)
     result = _merge_formula_fragments(result)
     # Strip control characters (except tab, LF, CR) that break MathJax rendering.
@@ -446,6 +582,25 @@ def _safe_para_split(text: str, target: int) -> int:
     return next_dollar + 1 if next_dollar != -1 else target
 
 
+def _dedup_chunk_boundaries(text: str) -> str:
+    """Remove duplicated text at chunk boundaries caused by LLM re-translation of overlap context."""
+    paragraphs = text.split("\n\n")
+    if len(paragraphs) < 3:
+        return text
+
+    kept = [paragraphs[0]]
+    for i in range(1, len(paragraphs)):
+        prev_norm = _normalize_for_dedup(kept[-1])
+        curr_norm = _normalize_for_dedup(paragraphs[i])
+        if prev_norm and curr_norm and len(curr_norm) > 20:
+            overlap_len = min(30, len(prev_norm), len(curr_norm))
+            if prev_norm[-overlap_len:] == curr_norm[:overlap_len]:
+                continue
+        kept.append(paragraphs[i])
+
+    return "\n\n".join(kept)
+
+
 def _build_chunks(paragraphs: list[str], max_size: int) -> list[tuple[str, str]]:
     """构建翻译块列表，每块为 (chunk_text, overlap_text)。
 
@@ -470,9 +625,18 @@ def _build_chunks(paragraphs: list[str], max_size: int) -> list[tuple[str, str]]
                 cur_size = len(para[start:end])
             continue
         if current and cur_size + ps > max_size:
-            raw_chunks.append("\n\n".join(current))
-            current = [para]
-            cur_size = ps
+            # Sentence-boundary-aware: avoid splitting mid-sentence across chunks.
+            last_para = current[-1] if current else ""
+            ends_sentence = bool(re.search(r"[.。!！?？]\s*$", last_para.strip()))
+            if not ends_sentence and len(current) >= 2:
+                rolled = current.pop()
+                raw_chunks.append("\n\n".join(current))
+                current = [rolled, para]
+                cur_size = len(rolled) + ps
+            else:
+                raw_chunks.append("\n\n".join(current))
+                current = [para]
+                cur_size = ps
         else:
             current.append(para)
             cur_size += ps
@@ -516,10 +680,16 @@ def _build_chunks(paragraphs: list[str], max_size: int) -> list[tuple[str, str]]
 
 
 
-def _build_chunk_message(chunk: str, overlap: str, prev: str, idx: int, total: int) -> str:
+def _build_chunk_message(
+    chunk: str, overlap: str, prev: str, idx: int, total: int, prev_tail_en: str = "",
+) -> str:
     parts = [f"## 翻译任务：第 {idx + 1}/{total} 部分\n"]
     if prev:
         parts.append(f"上文核心内容（已翻译，仅供上下文参考，无需重复翻译）：\n{prev}\n")
+    if prev_tail_en:
+        parts.append(
+            f"上文末尾原文（仅供参考上下文衔接，**切勿重复翻译此段**）：\n{prev_tail_en}\n"
+        )
     parts.append("请翻译以下英文论文内容为中文：\n")
     parts.append(chunk)
     return "\n".join(parts)

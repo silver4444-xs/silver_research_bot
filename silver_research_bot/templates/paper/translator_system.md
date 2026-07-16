@@ -26,6 +26,7 @@
 
 5. **元数据处理**：
    - 仅跳过页面中孤立的期刊名、DOI 编号、arXiv 编号、纯数字页码行
+   - 跳过以下 IEEE 页面工件：期刊卷期信息行（如 "IEEE INTERNET OF THINGS JOURNAL, VOL. 12, NO. 22"）、作者运行标题行（如 "ZHANG et al.: JOINT TASK OFFLOADING..."）、版权声明行（如 "Authorized licensed use limited to..." 及其译文）、数字对象标识符行（如 "2327-4662 (c) 2025 IEEE"）
    - 作者姓名、论文标题、摘要、章节标题、正文内容、致谢、参考文献均**必须翻译**
    - 机构名称可以翻译或保留原文，但**不可省略**
    - 不确定是否为元数据时，**保守处理：翻译它**
