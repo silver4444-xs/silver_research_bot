@@ -14,7 +14,7 @@
 </template>
 
 <script setup>
-import { provide } from 'vue'
+import { provide, onMounted } from 'vue'
 import Sidebar from './components/Sidebar.vue'
 import HeroHeader from './components/HeroHeader.vue'
 import { useApi } from './composables/useApi.js'
@@ -34,4 +34,6 @@ provide('i18n', i18n)
 provide('markdown', md)
 provide('papers', papers)
 provide('compare', compare)
+
+onMounted(() => { papers.loadAll() })
 </script>

@@ -8,20 +8,23 @@ export function useMarkdown(upText) {
 	if(window.mermaid)try{mermaid.run({querySelector:'.mermaid'})}catch(e){}}
 	document.addEventListener('MathJax:ready',()=>{_mjRetries=0;retypeset()})
 	function retypesetDeferred(){nextTick(()=>{setTimeout(retypeset,0)})}
-	function renderAll(t){let h=renderMd(t);retypesetDeferred();return h}
+	function _stripBackendWarnings(t){return t.replace(/(\n\n> ⚠[^\n]*)+$/,'')}
+	function renderAll(t){t=_stripBackendWarnings(t);let h=renderMd(t);retypesetDeferred();return h}
 	function sanitizeLatex(s){return s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,"").replace(/#/g,'\\#').replace(/%/g,'\\%').replace(/~/g,'\\textasciitilde{}').replace(/[""]/g,'"').replace(/['']/g,"'").replace(/ /g,' ')}
 	function renderFormula(t){if(!t)return'';if(t.indexOf('<div class="frow"')>-1||t.indexOf('<style>')>-1){
 	  // Sanitize LaTeX special chars
-	  t=t.replace(/(<div class="fexpr">)([\s\S]*?)(<\/div>)/g,function(_,o,c,e){c=sanitizeLatex(c);if(/^\s*\$/.test(c))return o+c+e;c=c.replace(/^\s+|\s+$/g,'');return o+'$$'+c+'$$'+e})
+	  t=t.replace(/(<div class="fexpr">)([\s\S]*?)(<\/div>)/g,function(_,o,c,e){c=sanitizeLatex(c);if(!/\\begin\{(?:align|aligned|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|cases|array|gather|gathered|split|eqnarray)\}/.test(c))c=c.replace(/&/g,'\\&');if(/^\s*\$/.test(c))return o+c+e;c=c.replace(/^\s+|\s+$/g,'');return o+'$$'+c+'$$'+e})
 	  // Auto-wrap unwrapped LaTeX in .fmean: \cmd{...} patterns
-	  t=t.replace(/(<div class="fmean">)([\s\S]*?)(<\/div>)/g,function(_,o,c,e){(function(sc){var mb=[];sc=sc.replace(/\$\$[\s\S]*?\$\$|\$[\s\S]*?\$/g,function(m){mb.push(m);return'￰M'+(mb.length-1)+'￰'});sc=sc.replace(/(\\[a-zA-Z]+(?:\{[^}]*\})+(?!\$))/g,'$$$1$');sc=sc.replace(/￰M(\d+)￰/g,function(_,i){return mb[parseInt(i)]});return sc})(c);return o+c+e})
-	  retypesetDeferred();return t}return renderAll(t)}
+	  t=t.replace(/(<div class="fmean">)([\s\S]*?)(<\/div>)/g,function(_,o,c,e){(function(sc){var mb=[];sc=sc.replace(/\$\$[\s\S]*?\$\$|\$[\s\S]*?\$/g,function(m){mb.push(m);return'￰M'+(mb.length-1)+'￰'});sc=sc.replace(/(\\[a-zA-Z]+(?:\{[^}]*\})+(?!\$))/g,'$$$1$');sc=sc.replace(/￰M(\d+)￰/g,function(_,i){var m=mb[parseInt(i)];if(m[0]==='$'&&m[1]!=='$')m=m.replace(/&/g,'\\&');return m});return sc})(c);return o+c+e})
+	  t=t.replace(/\n{3,}/g,'\n\n');retypesetDeferred();return t}return renderAll(t)}
 	function renderMd(t){if(!t)return''
 	  let m=[],mb=[],ht=[]
-	  t=t.replace(/\$\$([\s\S]*?)\$\$/g,(_,c)=>{mb.push('$$'+c+'$$');return'◈M'+mb.length+'◈'})
-	  t=t.replace(/(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)/g,(_,c)=>{mb.push('$'+c+'$');return'◈M'+mb.length+'◈'})
+	  t=t.replace(/\$\$([\s\S]*?)\$\$/g,(_,c)=>{mb.push('$$'+c+'$$');return '◈M'+mb.length+'◈'})
+	  t=t.replace(/(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)/g,(_,c)=>{mb.push('$'+c+'$');return '◈M'+mb.length+'◈'})
+	  t=t.replace(/\\\[([\s\S]*?)\\\]/g,(_,c)=>{mb.push('\\['+c+'\\]');return '◈M'+mb.length+'◈'})
+	  t=t.replace(/\\\(([\s\S]*?)\\\)/g,(_,c)=>{mb.push('\\('+c+'\\)');return '◈M'+mb.length+'◈'})
 	  t=t.replace(/```mermaid\s*\n([\s\S]*?)```/g,(_,c)=>{m.push(c);return'%%M'+m.length+'%%'})
-	  t=t.replace(/<(img|div|span|strong)\b[^>]*>|<\/(div|span|strong)>/gi,m=>{ht.push(m);return'◈H'+ht.length+'◈'})
+	  t=t.replace(/<(img|div|span|strong)\b[^>]*>|<\/(div|span|strong)>/gi,m=>{ht.push(m);return '◈H'+ht.length+'◈'})
 	  t=t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
 	  t=t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
 	    .replace(/^#### (.+)$/gm,'<h5>$1</h5>').replace(/^### (.+)$/gm,'<h4>$1</h4>')
@@ -37,7 +40,7 @@ export function useMarkdown(upText) {
 	    .replace(/(<tr>.*<\/tr>\n?)+/g,'<table>$&</table>')
 	    .replace(/^---$/gm,'<hr>')
 	  let tbl=[]
-	  t=t.replace(/(<table>[\s\S]*?<\/table>)/g,(_,c)=>{tbl.push(c);return'◈T'+tbl.length+'◈'})
+	  t=t.replace(/(<table>[\s\S]*?<\/table>)/g,(_,c)=>{tbl.push(c);return '◈T'+tbl.length+'◈'})
 	  t=t.replace(/\n\n/g,'</p><p>')
 	    .replace(/\n/g,'<br>').replace(/^(?!<)/,'<p>').replace(/(?<!>)$/,'</p>')
 	    .replace(/%%M(\d+)%%/g,(_,i)=>'<pre class="mermaid">'+m[parseInt(i)-1]+'</pre>')

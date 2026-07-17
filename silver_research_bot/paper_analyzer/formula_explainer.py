@@ -100,6 +100,7 @@ def _wrap_html(body: str) -> str:
     import re
     body = re.sub(r'^```html?\s*\n?', '', body.strip())
     body = re.sub(r'\n?```\s*$', '', body)
+    body = re.sub(r'\n{3,}', '\n\n', body)
     body = _strip_fragment_cards(body)
     body = _balance_fmean_braces(body)
     body = _balance_fexpr_braces(body)
@@ -175,9 +176,12 @@ def _balance_fexpr_braces(html: str) -> str:
     """Balance braces directly in .fexpr divs (pure LaTeX, no $...$ wrapping)."""
     import re
 
+    _ALIGN_ENVS = r'align|aligned|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|cases|array|gather|gathered|split|eqnarray'
     def _fix_fexpr(m: re.Match) -> str:
         prefix, latex, suffix = m.group(1), m.group(2), m.group(3)
         balanced = _balance_braces(latex.strip())
+        if '&' in balanced and not re.search(rf'\\begin\{{(?:{_ALIGN_ENVS})\*?\}}', balanced):
+            balanced = balanced.replace('&', r'\&')
         return prefix + balanced + suffix
 
     return re.sub(

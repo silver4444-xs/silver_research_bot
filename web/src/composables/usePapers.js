@@ -87,7 +87,7 @@ export function usePapers() {
   async function deleteAllPapers() { if (!confirm('确认删除全部论文？此操作不可撤销！')) return; try { await api('/api/paper/batch-delete', { method: 'POST', body: JSON.stringify({ delete_all: true }) }); selectedPapers.value = new Set(); await loadPapers(); pdet.value = null } catch (e) { console.error(e) } }
   function onDrop(e) { drag.value = false; const f = e.dataTransfer?.files?.[0]; if (f?.name?.toLowerCase().endsWith('.pdf') || f?.name?.toLowerCase().endsWith('.txt')) upFile.value = f }
   function onFile(e) { const f = e.target?.files?.[0]; if (f) upFile.value = f }
-  async function loadAll() { try { apiOk.value = true; apiStatus.value = '在线'; await Promise.all([loadRagPapers(), loadPapers()]) } catch { apiOk.value = false; apiStatus.value = '离线' } }
+  async function loadAll() { try { apiOk.value = true; apiStatus.value = '在线'; await loadPapers() } catch { apiOk.value = false; apiStatus.value = '离线' } }
 
   return {
     papers, pdet, selectedPapers, curPaperId, uploading, upStatus, progressMsg,

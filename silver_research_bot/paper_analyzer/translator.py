@@ -935,6 +935,23 @@ def _validate_formulas(translated: str) -> str:
         return sep + balanced + sep
     fixed = re.sub(r"\$\$(.+?)\$\$", _fix_block, fixed, flags=re.DOTALL)
     fixed = re.sub(r"(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)", _fix_block, fixed)
+    # Also escape & inside \[...\] and \(...\) (MathJax processEscapes delimiters)
+    def _fix_bracket_block(m: re.Match) -> str:
+        inner = m.group(1)
+        if '&' in inner and not re.search(
+            rf'\\begin\{{(?:{_ALIGN_ENVS})\*?\}}', inner
+        ):
+            inner = inner.replace('&', r'\&')
+        balanced = _balance_latex_braces(inner)
+        return r'\[' + balanced + r'\]'
+    fixed = re.sub(r"\\\[(.+?)\\\]", _fix_bracket_block, fixed, flags=re.DOTALL)
+    def _fix_paren_block(m: re.Match) -> str:
+        inner = m.group(1)
+        if '&' in inner:
+            inner = inner.replace('&', r'\&')
+        balanced = _balance_latex_braces(inner)
+        return r'\(' + balanced + r'\)'
+    fixed = re.sub(r"\\\((.+?)\\\)", _fix_paren_block, fixed)
     # Fix 6 (new): Detect corrupted set notation ($&$ instead of \mathcal{N})
     _CORRUPTED_SET_RE = re.compile(r"\$&?\$|&?\$&?\$")
     corrupted_sets = _CORRUPTED_SET_RE.findall(fixed)
