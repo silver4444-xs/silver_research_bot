@@ -2,6 +2,12 @@
   <div class="app">
     <Sidebar />
     <main class="main">
+      <HeroHeader
+        :lang="i18n.lang.value" :t="i18n.t" :apiOk="papers.apiOk.value" :apiStatus="papers.apiStatus.value"
+        :paperCount="papers.papers.value.length" :totalFormulas="papers.totalFormulas.value" :totalFigures="papers.totalFigures.value"
+        @toggle-lang="i18n.lang.value = i18n.lang.value === 'zh' ? 'en' : 'zh'"
+        @refresh="papers.loadAll"
+      />
       <router-view />
     </main>
   </div>
@@ -10,6 +16,7 @@
 <script setup>
 import { provide } from 'vue'
 import Sidebar from './components/Sidebar.vue'
+import HeroHeader from './components/HeroHeader.vue'
 import { useApi } from './composables/useApi.js'
 import { useI18n } from './composables/useI18n.js'
 import { useMarkdown } from './composables/useMarkdown.js'

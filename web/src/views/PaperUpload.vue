@@ -1,5 +1,10 @@
 <template>
   <div style="margin-top:var(--s-5)">
+    <div class="subnav" style="margin-bottom:var(--s-4)">
+      <router-link to="/papers/upload" class="st" active-class="act" exact>上传论文</router-link>
+      <router-link to="/papers" class="st" active-class="act">论文列表</router-link>
+      <router-link to="/compare" class="st" active-class="act">横向对比</router-link>
+    </div>
     <div class="card">
       <div class="ch"><h3>提交论文</h3></div>
       <div class="utabs">

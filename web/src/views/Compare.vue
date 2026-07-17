@@ -1,5 +1,10 @@
 <template>
   <div class="cmp-area">
+    <div class="subnav" style="margin-bottom:var(--s-4)">
+      <router-link to="/papers/upload" class="st" active-class="act">上传论文</router-link>
+      <router-link to="/papers" class="st" active-class="act">论文列表</router-link>
+      <router-link to="/compare" class="st" active-class="act" exact>横向对比</router-link>
+    </div>
     <div class="card">
       <div class="ch"><h3>横向对比工作台 <span style="font-size:12px;color:var(--c-text-muted);font-weight:400">— 已选 {{ cmpIds.length }} 篇</span></h3></div>
       <div class="cmp-pick-grid">

@@ -1,5 +1,10 @@
 <template>
   <div>
+    <div class="subnav" style="margin-bottom:var(--s-4)">
+      <router-link to="/papers/upload" class="st">上传论文</router-link>
+      <router-link to="/papers" class="st" active-class="act" exact>论文列表</router-link>
+      <router-link to="/compare" class="st" active-class="act">横向对比</router-link>
+    </div>
     <div class="pstats-bar">
       <div class="pstat"><span class="pstat-num">{{ papers.length }}</span><span class="pstat-label">论文</span></div>
       <div class="pstat"><span class="pstat-num cp">{{ papers.filter(p => p.status === 'completed').length }}</span><span class="pstat-label">已完成</span></div>
