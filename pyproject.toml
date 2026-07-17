@@ -4,13 +4,41 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "silver-research-bot-ai"
-version = "0.2.0"
+version = "0.7.0"
 description = "Autonomous AI research assistant with FastAPI backend and Vue web UI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "silver-research-bot contributors" }]
-keywords = ["ai", "research", "agent", "rag", "fastapi", "vue"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Markup :: LaTeX",
+    "Framework :: FastAPI",
+]
+keywords = [
+    "ai",
+    "research",
+    "agent",
+    "rag",
+    "fastapi",
+    "vue",
+    "paper-analysis",
+    "llm",
+    "academic",
+    "pdf-parsing",
+    "machine-learning",
+    "nlp",
+    "multi-agent",
+    "chatbot",
+    "knowledge-graph",
+]
 dependencies = [
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
@@ -32,6 +60,13 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 "silver_research_bot" = ["py.typed"]
+
+[project.urls]
+Homepage = "https://github.com/HKUDS/silver-research-bot"
+Repository = "https://github.com/HKUDS/silver-research-bot"
+Documentation = "https://silver-research-bot.wiki"
+"Issue Tracker" = "https://github.com/HKUDS/silver-research-bot/issues"
+Changelog = "https://github.com/HKUDS/silver-research-bot/blob/main/docs/changelog/CHANGELOG.md"
 
 [tool.pytest.ini_options]
 addopts = "-q"

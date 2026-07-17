@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from silver_research_bot import __version__
 from silver_research_bot.research_core import ResearchCore
 from silver_research_bot.research_rag import ResearchRAG
 from silver_research_bot.paper_analyzer.manager import PaperManager
@@ -62,7 +63,7 @@ class RagContextRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=20)
 
 
-app = FastAPI(title="Silver Research Bot Research API", version="0.4.0")
+app = FastAPI(title="Silver Research Bot Research API", version=__version__)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
