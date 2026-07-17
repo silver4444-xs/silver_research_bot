@@ -159,11 +159,11 @@
     <!-- Overview -->
     <div v-if="cmpTab==='overview'" class="cmp-overview"><div class="cmp-ov-row" v-if="cmpStructured?.similarity_matrix?.length"><strong>论文相似度矩阵</strong><div class="cmp-mini-heat" v-html="cmpMiniHeatmap()"></div></div><div class="cmp-ov-row" v-if="cmpStructured?.formula_overlap && Object.keys(cmpStructured.formula_overlap).length"><strong>公式重叠度</strong><table class="cmp-tbl"><thead><tr><th>论文对</th><th>Jaccard 相似度</th></tr></thead><tbody><tr v-for="(v,k) in cmpStructured.formula_overlap" :key="k"><td>{{ cmpFormatPair(k) }}</td><td>{{ (v*100).toFixed(1) }}%</td></tr></tbody></table></div></div>
     <!-- Dimensions matrix -->
-    <div v-if="cmpTab==='dimensions'" class="cmp-matrix"><div class="cmp-dim-filter"><label>维度筛选: </label><select v-model="cmpDimFilter"><option value="all">全部维度</option><option v-for="d in cmpDimNames" :key="d" :value="d">{{ d }}</option></select></div><table class="cmp-tbl cmp-mtbl"><thead><tr><th>维度</th><th v-for="(p,i) in cmpPapers" :key="p.paper_id" :style="'color:'+PAPER_COLORS[i]">{{ p.title?.slice(0,20) }}</th></tr></thead><tbody><tr v-for="d in filteredCmpDims" :key="d"><td><strong>{{ d }}</strong></td><td v-for="(p,i) in cmpPapers" :key="p.paper_id"><div class="cmp-score-badge" :style="'--clr:'+PAPER_COLORS[i]">{{ (cmpStructured?.scores?.[p.paper_id]?.[d]||'-') }}</div></td></tr></tbody></table></div>
+    <div v-if="cmpTab==='dimensions'" class="cmp-matrix"><div class="cmp-dim-filter"><label>维度筛选: </label><select v-model="cmpDimFilter"><option value="all">全部维度</option><option v-for="d in cmpDimNames" :key="d" :value="d">{{ d }}</option></select></div><table class="cmp-tbl cmp-mtbl"><thead><tr><th>维度</th><th v-for="(p,i) in cmpPapers" :key="p.paper_id" :style="'color:'+PAPER_COLORS[i]">{{ p.title?.slice(0,20) }}</th></tr></thead><tbody><template v-for="d in filteredCmpDims" :key="d"><tr @click="cmpExpandedDim=cmpExpandedDim===d?null:d" style="cursor:pointer" :style="cmpExpandedDim===d?'background:rgba(255,255,255,0.04)':''"><td><strong>{{ d }}</strong> <span style="font-size:10px;color:var(--c-text-muted)">{{ cmpExpandedDim===d?'▲':'▶' }}</span></td><td v-for="(p,i) in cmpPapers" :key="p.paper_id"><div class="cmp-score-badge" :style="'--clr:'+PAPER_COLORS[i]">{{ (cmpStructured?.scores?.[p.paper_id]?.[d]||'-') }}</div></td></tr><tr v-if="cmpExpandedDim===d"><td :colspan="cmpPapers.length+1" style="padding:16px 12px;background:rgba(255,255,255,0.02)"><div v-for="(p,i) in cmpPapers" :key="p.paper_id" style="margin-bottom:12px"><div :style="'color:'+PAPER_COLORS[i]+';font-weight:600;margin-bottom:4px'">{{ p.title?.slice(0,50) || p.paper_id }}</div><div v-if="cmpStructured?.dimensions?.[d]?.score_reasons?.[p.paper_id]" style="font-size:13px;color:var(--c-text-secondary);margin-bottom:8px;padding:6px 10px;background:rgba(255,255,255,0.03);border-radius:4px;border-left:3px solid" :style="'border-left-color:'+PAPER_COLORS[i]"><strong>评分依据:</strong> {{ cmpStructured.dimensions[d].score_reasons[p.paper_id] }}</div><div v-if="cmpStructured?.dimensions?.[d]?.extracted_items?.[p.paper_id]?.length"><div style="font-size:12px;color:var(--c-text-muted);margin-bottom:4px">关键发现:</div><div v-for="(it,k) in cmpStructured.dimensions[d].extracted_items[p.paper_id]" :key="k" style="margin-bottom:6px;padding:6px 10px;background:rgba(255,255,255,0.03);border-radius:4px"><div style="color:var(--c-accent);font-size:13px">{{ it.name }}</div><div style="font-size:12px;color:var(--c-text-secondary)">{{ it.description }}</div><div v-if="it.comparative_note" style="font-size:11px;color:var(--c-warning);margin-top:2px"><em>跨论文对比:</em> {{ it.comparative_note }}</div></div></div></div></td></tr></template></tbody></table></div>
     <!-- Charts -->
     <div v-if="cmpTab==='charts'" class="cmp-charts"><div class="cmp-chart-box" id="cmp-radar-container"><strong>维度评分雷达图</strong><div class="cmp-cv" ref="cmpRadarCv"></div></div><div class="cmp-chart-box" id="cmp-heatmap-container"><strong>相似度热力图</strong><div class="cmp-cv" ref="cmpHeatCv"></div></div><div class="cmp-chart-box" id="cmp-bars-container"><strong>维度评分柱状图</strong><div class="cmp-cv" ref="cmpBarsCv"></div></div><div class="cmp-chart-box" id="cmp-stack-container"><strong>评分堆叠图</strong><div class="cmp-cv" ref="cmpStackCv"></div></div></div>
-    <!-- Metrics -->
-    <div v-if="cmpTab==='metrics'"><table class="cmp-tbl" v-if="cmpResult.metrics?.length"><thead><tr><th>指标</th><th v-for="(p,i) in cmpPapers" :key="p.paper_id">{{ p.title?.slice(0,20) }}</th><th>偏好</th></tr></thead><tbody><tr v-for="m in cmpResult.metrics" :key="m.metric_name"><td><strong>{{ m.metric_name }}</strong><div style="font-size:11px;color:var(--c-text-secondary)">{{ m.dataset }}</div></td><td v-for="(p,i) in cmpPapers" :key="p.paper_id" :style="'color:'+PAPER_COLORS[i]">{{ m.paper_values?.[p.paper_id] ?? '-' }}{{ m.unit||'' }}</td><td>{{ m.higher_is_better?'↑ 越高越好':'↓ 越低越好' }}</td></tr></tbody></table><p v-else class="empty">暂无非结构化指标数据。指标数据依赖 LLM 从实验设计中自动提取。</p></div>
+	    <!-- Gap Analysis -->
+    <div v-if="cmpTab==='gap'" class="cmp-gap"><div v-if="cmpPairwiseGaps.length" style="margin-bottom:20px"><h4 style="margin-bottom:8px">最大差异维度</h4><div v-for="(pair,k) in cmpPairwiseGaps" :key="k" style="margin-bottom:10px;padding:10px;background:rgba(255,255,255,0.03);border-radius:6px"><div style="font-size:13px;color:var(--c-text-muted);margin-bottom:6px">{{ cmpPaperTitle(pair.pidA) }} <span style="color:var(--c-text-secondary)">vs</span> {{ cmpPaperTitle(pair.pidB) }}</div><div v-for="g in pair.topGaps" :key="g.dim" style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px"><span style="min-width:80px;color:var(--c-accent)">{{ g.dim }}</span><span :style="'color:'+PAPER_COLORS[cmpPapers.findIndex(x=>x.paper_id===g.pidA)]">{{ g.scoreA }}</span><span style="font-size:11px;color:var(--c-text-muted)">Δ{{ g.delta.toFixed(1) }}</span><span :style="'color:'+PAPER_COLORS[cmpPapers.findIndex(x=>x.paper_id===g.pidB)]">{{ g.scoreB }}</span></div></div></div><div style="margin-bottom:16px"><h4 style="margin-bottom:8px">各维度差异详情</h4><div v-for="(dim,dn) in cmpStructured?.dimensions||{}" :key="dn" style="margin-bottom:14px;padding:12px;background:rgba(255,255,255,0.02);border-radius:6px;border-left:3px solid var(--c-accent)"><div style="font-weight:600;margin-bottom:8px;color:var(--c-accent)">{{ dn }}</div><div v-for="(p,i) in cmpPapers" :key="p.paper_id" style="margin-bottom:8px;padding:8px;background:rgba(255,255,255,0.02);border-radius:4px"><div :style="'color:'+PAPER_COLORS[i]+';font-weight:600;font-size:13px'">{{ p.title?.slice(0,50) || p.paper_id }} <span class="cmp-score-badge" :style="'--clr:'+PAPER_COLORS[i]+';margin-left:6px'">{{ dim.extracted_scores?.[p.paper_id] ?? '—' }}</span></div><div v-if="dim.score_reasons?.[p.paper_id]" style="font-size:12px;color:var(--c-text-secondary);margin:4px 0">{{ dim.score_reasons[p.paper_id] }}</div><div v-if="dim.extracted_items?.[p.paper_id]?.length"><div v-for="(it,k) in dim.extracted_items[p.paper_id]" :key="k" style="margin-top:4px;padding:4px 8px;background:rgba(255,255,255,0.03);border-radius:3px;font-size:12px"><span style="color:var(--c-accent)">{{ it.name }}</span><span v-if="it.comparative_note" style="color:var(--c-warning);margin-left:6px;font-size:11px">↔ {{ it.comparative_note }}</span></div></div></div></div></div></div><p v-if="cmpResult.structured?.error" class="empty" style="color:var(--c-warning)">注意: 本次对比在降级模式下完成 — {{ cmpResult.structured.error }}</p>
     <!-- Synthesis -->
     <div v-if="cmpTab==='synthesis'" class="md" v-html="renderMd(cmpResult.synthesis||'综合分析生成中…')"></div>
     </div>
@@ -199,6 +199,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useI18n } from './composables/useI18n.js'
 
 const icons={
   chat:'<path d="M20 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4l4 4 4-4h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/>',
@@ -214,11 +215,12 @@ const tab=ref('papers');const ps=ref('upload');const dt=ref('translation');const
 const upFile=ref(null);const upText=ref('');const upLang=ref('auto');const uploading=ref(false);const drag=ref(false);const upStatus=ref('');const progressMsg=ref('');const curPaperId=ref('');const pStages=ref([]);let _pollTimer=null
 const STAGES=[{id:'parse',label:'文档解析'},{id:'translate',label:'全文翻译'},{id:'analyze',label:'四维分析'},{id:'formula_explain',label:'公式解读'},{id:'visualize',label:'可视化'},{id:'citation',label:'引用图谱'},{id:'review',label:'多视角审稿'}]
 const papers=ref([]);const pdet=ref(null);const selectedPapers=ref(new Set());const cmpIds=ref([]);const cmpResult=ref(null);const comparing=ref(false);const cmpError=ref('')
-const cmpTab=ref('overview');const cmpTabs=[{id:'overview',label:'对比仪表板'},{id:'dimensions',label:'多维对比'},{id:'charts',label:'可视化图表'},{id:'metrics',label:'定量分析'},{id:'synthesis',label:'综合分析'}]
+const cmpTab=ref('overview');const cmpTabs=[{id:'overview',label:'对比仪表板'},{id:'dimensions',label:'多维对比'},{id:'charts',label:'可视化图表'},{id:'gap',label:'差异分析'},{id:'synthesis',label:'综合分析'}]
+const DIM_COLORS=['#a78bfa','#60a5fa','#34d399','#fbbf24','#f472b6','#fb923c','#94a3b8','#f87171']
 const cmpReadyPapers=computed(()=>papers.value.filter(p=>p.status==='completed'))
 function toggleCmpPaper(pid){const i=cmpIds.value.indexOf(pid);if(i>=0)cmpIds.value.splice(i,1);else cmpIds.value.push(pid)}
 const cmpHistory=ref([]);const showCmpHistory=ref(false);const cmpStructured=ref(null);const cmpDimFilter=ref('all')
-const cmpDimNames=ref([]);const cmpPapers=ref([])
+const cmpDimNames=ref([]);const cmpPapers=ref([]);const cmpExpandedDim=ref(null)
 const cmpRadarCv=ref(null);const cmpHeatCv=ref(null);const cmpBarsCv=ref(null);const cmpStackCv=ref(null)
 const PAPER_COLORS=['#a78bfa','#60a5fa','#34d399','#fbbf24','#f472b6','#fb923c','#94a3b8','#f87171','#4ade80','#c084fc','#38bdf8','#a3e635']
 const apiOk=ref(true);const apiStatus=ref('未知');const ragPapers=ref([])
@@ -227,7 +229,7 @@ const chatIn=ref('');const chatReply=ref(null);const chatAttach=ref(null)
 
 const ragQ=ref('retrieval augmented');const ragK=ref(5);const ragTag=ref('');const ragModality=ref('');const ragResults=ref([]);const ragCtx=ref('');const ragSuggest=ref('');const ragSnap=ref({})
 const pfTags=ref('rag,llm');const pf=ref({title:'',abstract:'',content:''})
-const lang=ref('zh');const LOCALE={zh:{eyebrow:'论文分析平台',title:'研究论文深度分析工作台',subtitle:'上传 PDF 即可自动翻译、四维分析、公式解读与可视化。',api:'API',analyzed:'已分析',refresh:'刷新'},en:{eyebrow:'Paper Analysis Platform',title:'Research Paper Analysis Workbench',subtitle:'Upload PDF for auto translation, 4D analysis, formula explanation & visualization.',api:'API',analyzed:'Analyzed',refresh:'Refresh'}};function t(k){return (LOCALE[lang.value]||LOCALE.zh)[k]||k}
+const { lang, t, LOCALE } = useI18n()
 const askQ=ref('');const askA=ref('')
 const totalFormulas=computed(()=>papers.value.reduce((s,p)=>s+(p.formula_count||0),0))
 const totalFigures=computed(()=>papers.value.reduce((s,p)=>s+(p.figure_count||0),0))
@@ -265,7 +267,7 @@ async function pollProgress(){
     }
   }catch(e){progressMsg.value='轮询失败: '+e.message;console.error('pollProgress',e)}}
 let _mjRetries=0
-function retypeset(){if(window.MathJax&&window.MathJax.typesetPromise){try{MathJax.typesetPromise()}catch(e){console.error('MathJax typeset error:',e)}_mjRetries=0}
+function retypeset(){if(window.MathJax&&window.MathJax.typesetPromise){try{MathJax.typesetClear();MathJax.typesetPromise()}catch(e){console.error('MathJax typeset error:',e)}_mjRetries=0}
 else if(_mjRetries<30){_mjRetries++;setTimeout(retypeset,500)}
 if(window.mermaid)try{mermaid.run({querySelector:'.mermaid'})}catch(e){}}
 document.addEventListener('MathJax:ready',()=>{_mjRetries=0;retypeset()})
@@ -306,6 +308,21 @@ function cmpPaperTitle(pid){const p=cmpPapers.value.find(x=>x.paper_id===pid);re
 function cmpFormatPair(key){const parts=key.split('|');return parts.map(p=>cmpPaperTitle(p)).join(' ↔ ')}
 function switchCmpTab(tid){cmpTab.value=tid;if(tid==='charts')nextTick().then(renderAllCmpCharts)}
 const filteredCmpDims=computed(()=>cmpDimFilter.value==='all'?cmpDimNames.value:[cmpDimFilter.value])
+const cmpPairwiseGaps=computed(()=>{
+  const dims=cmpStructured.value?.dimensions;const pids=cmpStructured.value?.paper_ids||[]
+  if(!dims||pids.length<2)return[]
+  const gaps=[]
+  for(let i=0;i<pids.length;i++){for(let j=i+1;j<pids.length;j++){
+    const pairGaps=[]
+    for(const[dn,dim] of Object.entries(dims)){
+      const sA=dim.extracted_scores?.[pids[i]],sB=dim.extracted_scores?.[pids[j]]
+      if(sA!=null&&sB!=null)pairGaps.push({dim:dn,delta:Math.abs(sA-sB),scoreA:sA,scoreB:sB,pidA:pids[i],pidB:pids[j]})
+    }
+    pairGaps.sort((a,b)=>b.delta-a.delta)
+    gaps.push({pidA:pids[i],pidB:pids[j],topGaps:pairGaps.slice(0,3)})
+  }}
+  return gaps
+})
 function cmpMiniHeatmap(){const m=cmpStructured.value?.similarity_matrix;if(!m||!m.length)return'';const n=m.length;let h=`<div style="display:grid;grid-template-columns:repeat(${n},1fr);gap:3px;width:100%;max-width:420px;margin:0 auto">`;for(let i=0;i<n;i++)for(let j=0;j<n;j++){const v=m[i]?.[j]||0;const a=Math.round(v*255);h+=`<div style="aspect-ratio:1;background:rgb(${a},${Math.round(a*0.4)},${Math.round(255-a*0.6)});font-size:${n>4?9:12}px;display:flex;align-items:center;justify-content:center;border-radius:3px;color:${v>0.55?'#000':'#fff'}" title="相似度:${v}">${v.toFixed(2)}</div>`}h+='</div>';return h}
 
 // D3 chart rendering
@@ -339,7 +356,7 @@ function renderCmpBars(){const el=cmpBarsCv.value;if(!el||!window.d3)return;el.i
   const maxY=10;const y=d3.scaleLinear().domain([0,maxY]).range([H-40,20])
   svg.append('g').attr('transform','translate(60,0)').call(d3.axisLeft(y).ticks(5))
   cd.datasets.forEach((ds,j)=>{cd.labels.forEach((l,i)=>{const v=ds.data[i]||0;const bx=70+i*(m+1)*barW+j*barW
-    svg.append('rect').attr('x',bx).attr('y',y(v)).attr('width',barW-2).attr('height',H-40-y(v)).attr('fill',PAPER_COLORS[j]).attr('rx',2)
+    svg.append('rect').attr('x',bx).attr('y',y(v)).attr('width',barW-2).attr('height',H-40-y(v)).attr('fill',DIM_COLORS[j%DIM_COLORS.length]).attr('rx',2)
     svg.append('text').attr('x',bx+barW/2).attr('y',y(v)-4).attr('text-anchor','middle').attr('fill','#ccc').attr('font-size',9).text(v.toFixed(1))})})}
 function renderCmpStack(){const el=cmpStackCv.value;if(!el||!window.d3)return;el.innerHTML='';const cd=cmpStructured.value?.chart_data?.stacked;if(!cd||!cd.labels?.length)return
   const W=el.clientWidth||500,H=320,n=cd.labels?.length||0,barW=Math.max(20,Math.floor((W-80)/n))
@@ -349,7 +366,7 @@ function renderCmpStack(){const el=cmpStackCv.value;if(!el||!window.d3)return;el
   const y=d3.scaleLinear().domain([0,maxTotal]).range([H-40,20])
   svg.append('g').attr('transform','translate(60,0)').call(d3.axisLeft(y).ticks(5))
   for(let i=0;i<n;i++){let acc=0;for(let j=0;j<dims.length;j++){const v=data[i]?.[j]||0
-    svg.append('rect').attr('x',70+i*barW).attr('y',y(acc+v)).attr('width',barW-3).attr('height',y(acc)-y(acc+v)).attr('fill',PAPER_COLORS[j]).attr('rx',1);acc+=v}}}
+    svg.append('rect').attr('x',70+i*barW).attr('y',y(acc+v)).attr('width',barW-3).attr('height',y(acc)-y(acc+v)).attr('fill',DIM_COLORS[j%DIM_COLORS.length]).attr('rx',1);acc+=v}}}
 // Export functions
 function exportCompareMD(){const s=cmpResult.value?.synthesis||'';const t=cmpResult.value?.structured;let md='# 论文横向对比报告\n\n';if(t?.scores){md+='## 评分矩阵\n\n';for(const[pid,sc] of Object.entries(t.scores)){md+=`- ${pid}: `+Object.entries(sc).map(([k,v])=>`${k}=${v}`).join(', ')+'\n'}}md+='\n## 综合分析\n\n'+s;downloadBlob(md,'comparison_report.md','text/markdown')}
 function exportCompareCSV(){const t=cmpStructured.value;if(!t||!t.scores){alert('无结构化数据可导出');return}const dims=cmpDimNames.value;let csv='paper_id,'+dims.join(',')+'\n';for(const[pid,sc] of Object.entries(t.scores)){csv+=pid+','+dims.map(d=>sc[d]||'').join(',')+'\n'}downloadBlob(csv,'comparison_scores.csv','text/csv')}
