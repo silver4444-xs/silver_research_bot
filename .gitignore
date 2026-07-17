@@ -49,6 +49,10 @@ logs.jsonl
 
 # Internal harness state
 .superpowers/
+.claude/
+
+# Dev artifacts (plans, specs, generated reports)
+docs/superpowers/
 
 # Ruff
 .ruff_cache/
