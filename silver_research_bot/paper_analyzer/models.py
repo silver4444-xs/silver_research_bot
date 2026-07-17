@@ -78,6 +78,7 @@ class ComparisonDimension:
     paper_data: dict[str, str] = field(default_factory=dict)
     extracted_scores: dict[str, float] = field(default_factory=dict)
     extracted_items: dict[str, list] = field(default_factory=dict)
+    score_reasons: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -94,6 +95,10 @@ class StructuredComparison:
     chart_data: dict = field(default_factory=dict)
     synthesis_md: str = ""
     created_at: str = ""
+    error: str = ""
+    model_used: str = ""
+    total_time_seconds: float = 0.0
+    phase_times: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

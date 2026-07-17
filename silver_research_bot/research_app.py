@@ -597,14 +597,42 @@ def paper_figure(paper_id: str, filename: str):
     return FileResponse(str(img_path), media_type=media_type)
 
 
+_compare_progress: dict[str, dict] = {}
+
+async def _cleanup_progress():
+    """Periodically remove stale progress entries (older than 10 minutes)."""
+    import time as _time
+    while True:
+        await asyncio.sleep(300)
+        now = _time.monotonic()
+        stale = [tid for tid, v in _compare_progress.items()
+                  if v.get("_ts", 0) and now - v["_ts"] > 600]
+        for tid in stale:
+            _compare_progress.pop(tid, None)
+
+@app.on_event("startup")
+async def _start_progress_cleanup():
+    asyncio.create_task(_cleanup_progress())
+
 @app.post("/api/paper/compare")
 async def paper_compare(request: PaperCompareRequest):
+    import uuid
+    import time as _time
+    task_id = uuid.uuid4().hex[:12]
+    _compare_progress[task_id] = {"phase": "init", "message": "准备中…", "done": False, "_ts": _time.monotonic()}
+
+    def on_progress(phase: str, message: str):
+        _compare_progress[task_id] = {"phase": phase, "message": message, "done": phase == "complete"}
+
     orch = _get_orchestrator()
     comparison = await _paper_manager.compare_papers(
         request.paper_ids, provider=orch.provider, model=orch.model,
         structured=request.structured, fast=request.fast,
+        on_progress=on_progress,
     )
+    _compare_progress[task_id] = {"phase": "complete", "message": "对比完成", "done": True}
     result = {
+        "task_id": task_id,
         "paper_ids": comparison.paper_ids,
         "dimensions": comparison.dimensions,
         "synthesis": comparison.synthesis,
@@ -615,16 +643,33 @@ async def paper_compare(request: PaperCompareRequest):
         sc = comparison.structured
         result["structured"] = {
             "paper_ids": sc.paper_ids,
+            "dimensions": {
+                dn: {
+                    "name": d.name,
+                    "extracted_scores": d.extracted_scores,
+                    "extracted_items": d.extracted_items,
+                    "score_reasons": d.score_reasons,
+                }
+                for dn, d in sc.dimensions.items()
+            },
             "scores": sc.scores,
             "formula_overlap": sc.formula_overlap,
             "citation_overlap": sc.citation_overlap,
             "similarity_matrix": sc.similarity_matrix,
             "synthesis_md": sc.synthesis_md,
             "created_at": sc.created_at,
+            "error": sc.error,
         }
         result["chart_data"] = comparison.chart_data
-        result["metrics"] = comparison.metrics
     return result
+
+
+@app.get("/api/paper/compare/progress/{task_id}")
+async def paper_compare_progress(task_id: str):
+    progress = _compare_progress.get(task_id)
+    if not progress:
+        raise HTTPException(status_code=404, detail="任务未找到")
+    return progress
 
 
 @app.get("/api/paper/compare/history")

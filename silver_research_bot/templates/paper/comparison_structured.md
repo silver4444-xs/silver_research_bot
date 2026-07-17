@@ -1,3 +1,4 @@
+{# UNUSED: Designed for single-shot structured comparison. Current implementation uses per-dimension parallel scoring via comparison_dimension.md for better quality. Kept for future fast-mode or as a reference. #}
 对论文进行多维度结构化对比分析。直接输出 JSON，禁止包含问候语、角色介绍、思考过程或 Markdown 代码围栏。
 
 ## 输出要求

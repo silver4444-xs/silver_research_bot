@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -175,6 +176,7 @@ class PaperManager:
         model: str = "",
         structured: bool = True,
         fast: bool = False,
+        on_progress: "callable | None" = None,
     ) -> CrossPaperComparison:
         """横向对比多篇论文 (v2: 多阶段结构化对比 + 降级兼容)。"""
         if len(paper_ids) > self.MAX_COMPARE_PAPERS:
@@ -199,10 +201,11 @@ class PaperManager:
             return comparison
 
         N = len(papers)
-        trunc = max(200, int(500 * 5 / max(N, 5)))
+        trunc = max(500, int(6000 / max(N, 1) ** 0.5))
 
         dims = {
             "系统模型": {}, "问题建模": {}, "算法方案": {}, "实验设计": {},
+            "理论审稿": {}, "工程审稿": {}, "领域审稿": {}, "贡献与局限": {},
         }
         for p in papers:
             pid = p["paper_id"]
@@ -210,13 +213,32 @@ class PaperManager:
             dims["问题建模"][pid] = p.get("problem_formulation", "")[:trunc]
             dims["算法方案"][pid] = p.get("optimization_algorithm", "")[:trunc]
             dims["实验设计"][pid] = p.get("experiment_design", "")[:trunc]
+            dims["理论审稿"][pid] = p.get("review_theory", "")[:trunc]
+            dims["工程审稿"][pid] = p.get("review_engineering", "")[:trunc]
+            dims["领域审稿"][pid] = p.get("review_domain", "")[:trunc]
+            dims["贡献与局限"][pid] = (
+                (p.get("optimization_algorithm", "") or "") + "\n" +
+                (p.get("review_domain", "") or "")
+            )[:trunc]
         comparison.dimensions = dims
 
         if provider and model:
             if structured and not fast:
                 try:
-                    await self._compare_structured(comparison, papers, provider, model)
-                except Exception:
+                    await self._compare_structured(comparison, papers, provider, model, trunc, on_progress)
+                except Exception as exc:
+                    logger.exception(f"[compare] Structured comparison failed, using degraded mode: {exc}")
+                    sc = StructuredComparison(
+                        paper_ids=[p["paper_id"] for p in papers],
+                        created_at=_utc_now(),
+                        error=str(exc)[:500],
+                    )
+                    sc.formula_overlap = self._compute_formula_overlap(papers)
+                    sc.similarity_matrix = self._compute_similarity_matrix(papers)
+                    sc.citation_overlap = self._compute_citation_overlap(papers)
+                    sc.chart_data = self._build_chart_data(sc, papers)
+                    comparison.structured = sc
+                    comparison.chart_data = sc.chart_data
                     await self._llm_compare(comparison, papers, provider, model, trunc)
             else:
                 await self._llm_compare(comparison, papers, provider, model, trunc)
@@ -227,19 +249,24 @@ class PaperManager:
     async def _compare_structured(
         self, comparison: CrossPaperComparison,
         papers: list[dict], provider: "LLMProvider", model: str,
+        trunc: int = 3000,
+        on_progress: "callable | None" = None,
     ) -> None:
         """v3: Per-dimension parallel scoring with calibration and visible failure."""
         sc = StructuredComparison(
             paper_ids=[p["paper_id"] for p in papers],
             created_at=_utc_now(),
         )
+        t0 = time.perf_counter()
+        sc.model_used = model
         logger.info(f"[compare_structured] Starting for {len(papers)} papers")
+        n_dims = 8
 
         # Phase 1: Per-dimension parallel scoring
-        sc.dimensions = await self._score_dimensions_parallel(papers, provider, model)
-
-        # Phase 1.5: Metrics extraction (separate focused call)
-        sc.metrics = await self._extract_metrics(papers, provider, model)
+        if on_progress: on_progress("scoring", f"正在对 {n_dims} 个维度进行评分…")
+        t1 = time.perf_counter()
+        sc.dimensions = await self._score_dimensions_parallel(papers, provider, model, trunc)
+        sc.phase_times["scoring"] = round(time.perf_counter() - t1, 2)
 
         # Phase 2: Collect scores — NO silent 5.0 fallback. Missing = error.
         sc.scores = {}
@@ -256,28 +283,42 @@ class PaperManager:
         logger.info(f"[compare_structured] Collected {len(sc.scores)}p x {len(sc.dimensions)}d scores")
 
         # Phase 2.5: Score calibration (soft failure)
+        if on_progress: on_progress("calibration", "正在校准评分一致性…")
+        t25 = time.perf_counter()
         await self._calibrate_scores(sc, papers, provider, model)
+        sc.phase_times["calibration"] = round(time.perf_counter() - t25, 2)
 
         # Phase 3: Local computation
+        if on_progress: on_progress("local", "正在计算公式重叠度和相似度…")
+        t3 = time.perf_counter()
         sc.formula_overlap = self._compute_formula_overlap(papers)
         sc.similarity_matrix = self._compute_similarity_matrix(papers)
         sc.citation_overlap = self._compute_citation_overlap(papers)
+        sc.phase_times["local_compute"] = round(time.perf_counter() - t3, 2)
 
         # Phase 4: Chart data
+        if on_progress: on_progress("chart", "正在生成图表数据…")
+        t4 = time.perf_counter()
         sc.chart_data = self._build_chart_data(sc, papers)
+        sc.phase_times["chart_data"] = round(time.perf_counter() - t4, 2)
 
         # Phase 5: Synthesis
+        if on_progress: on_progress("synthesis", "正在生成综合分析报告…")
+        t5 = time.perf_counter()
         sc.synthesis_md = await self._synthesize(sc, papers, provider, model)
+        sc.phase_times["synthesis"] = round(time.perf_counter() - t5, 2)
+        sc.total_time_seconds = round(time.perf_counter() - t0, 2)
+        if on_progress: on_progress("complete", f"对比完成，耗时 {sc.total_time_seconds:.1f}s")
         comparison.synthesis = sc.synthesis_md
 
         comparison.structured = sc
         comparison.chart_data = sc.chart_data
-        comparison.metrics = sc.metrics
         comparison.comparison_html = self._build_comparison_html(sc.synthesis_md)
         logger.info("[compare_structured] Complete")
 
     async def _score_dimensions_parallel(
         self, papers: list[dict], provider: "LLMProvider", model: str,
+        trunc: int = 4000,
     ) -> dict[str, ComparisonDimension]:
         """Score each dimension independently in parallel LLM calls."""
         from silver_research_bot.utils.prompt_templates import render_template
@@ -287,13 +328,21 @@ class PaperManager:
             "问题建模": {"description": "目标函数、约束条件、优化框架", "paper_key": "problem_formulation"},
             "算法方案": {"description": "算法类型、计算复杂度、收敛性与理论保证", "paper_key": "optimization_algorithm"},
             "实验设计": {"description": "数据集规模与多样性、基线数量、消融实验充分性、性能指标", "paper_key": "experiment_design"},
+            "理论审稿": {"description": "数学推导严密性、定理证明完整性、理论创新程度、符号一致性", "paper_key": "review_theory"},
+            "工程审稿": {"description": "可实现性、计算资源需求、超参数敏感性、代码复现难度", "paper_key": "review_engineering"},
+            "领域审稿": {"description": "与SOTA对比、问题动机合理性、实验说服力、潜在影响力", "paper_key": "review_domain"},
+            "贡献与局限": {"description": "核心贡献独特性、局限性、与他论文的互补关系、未来方向启发", "paper_key": "_contrib_synthetic"},
         }
 
         async def score_one(dim_name: str, dim_cfg: dict) -> ComparisonDimension:
-            system_prompt = render_template("paper/comparison_dimension.md", strip=True)
+            system_prompt = render_template("paper/comparison_dimension.md", strip=True, dimension_name=dim_name, dimension_description=dim_cfg["description"])
             parts = []
             for p in papers:
-                content = p.get(dim_cfg["paper_key"], "")[:4000]
+                pk = dim_cfg["paper_key"]
+                if pk == "_contrib_synthetic":
+                    content = (p.get("optimization_algorithm", "") + "\n" + p.get("review_domain", ""))[:trunc]
+                else:
+                    content = p.get(pk, "")[:trunc]
                 parts.append(f"## {p['title']} (paper_id: {p['paper_id']})\n{content}\n")
             user_msg = (
                 f"维度名称：{dim_name}\n维度描述：{dim_cfg['description']}\n"
@@ -318,7 +367,8 @@ class PaperManager:
         for i, result in enumerate(results):
             dn = dim_names[i]
             if isinstance(result, Exception):
-                logger.error(f"[score_dim] '{dn}' FAILED: {result}. Retrying once...")
+                logger.error(f"[score_dim] '{dn}' FAILED: {result}. Retrying after 2s...")
+                await asyncio.sleep(2.0)
                 try:
                     dimensions[dn] = await score_one(dn, dim_defs[dn])
                     logger.info(f"[score_dim] Retry SUCCEEDED for '{dn}'")
@@ -370,18 +420,26 @@ class PaperManager:
         dim = ComparisonDimension(name=dim_name)
         paper_scores = data.get("paper_score", {})
         key_items = data.get("key_items", {})
+        score_reasons = data.get("score_reasons", {})
         paper_key_map = {
             "系统模型": "system_model", "问题建模": "problem_formulation",
             "算法方案": "optimization_algorithm", "实验设计": "experiment_design",
+            "理论审稿": "review_theory", "工程审稿": "review_engineering",
+            "领域审稿": "review_domain", "贡献与局限": "_contrib_synthetic",
         }
         for p in papers:
             pid = p["paper_id"]
-            dim.paper_data[pid] = p.get(paper_key_map.get(dim_name, ""), "")[:500]
+            pk = paper_key_map.get(dim_name, "")
+            if pk == "_contrib_synthetic":
+                dim.paper_data[pid] = (p.get("optimization_algorithm", "") + "\n" + p.get("review_domain", ""))[:500]
+            else:
+                dim.paper_data[pid] = p.get(pk, "")[:500]
             score = paper_scores.get(pid)
             if score is None:
                 raise ValueError(f"Missing score for '{pid}' in dimension '{dim_name}'")
             dim.extracted_scores[pid] = float(score)
             dim.extracted_items[pid] = key_items.get(pid, [])
+            dim.score_reasons[pid] = score_reasons.get(pid, "")
         return dim
 
     async def _calibrate_scores(
@@ -402,9 +460,16 @@ class PaperManager:
         scores_table = "\n".join([header, sep] + rows)
         user_msg = (
             f"## 当前评分矩阵\n\n{scores_table}\n\n"
-            "请审查评分一致性：\n1. 同论文各维度是否一致\n2. 不同论文区分度是否足够（标准差≥1.0）\n"
-            "3. 输出校准后的评分\n\n"
-            '严格 JSON：{"calibrated_scores":{"paper_id":{"维度":分数}},"calibration_notes":["理由"]}'
+            "请审查并校准评分。校准标准：\n\n"
+            "1. **同论文维度一致性**：若一篇论文在某个维度得 9 分但在另一个维度仅得 3 分，"
+            "需检查是否因内容截断导致信息不对称，若是则调整至合理范围。\n"
+            "2. **区分度检查**：各维度标准差应 >= 1.0。若所有论文得分集中在 7-8 分，"
+            "应拉大差距（除非论文确实质量相当）。\n"
+            "3. **跨维度公平性**：同一论文不应因为在某维度有更多内容就获得系统性高分。"
+            "关注内容质量而非数量。\n"
+            "4. **异常值检测**：检查是否有论文在单一维度获得极低分（<3），"
+            "可能是内容截断或分析遗漏导致，需在 notes 中注明。\n\n"
+            '严格 JSON：{"calibrated_scores":{"paper_id":{"维度名":分数}},"calibration_notes":["每条校准理由"],"anomalies":["异常值说明"]}'
         )
         logger.info("[calibrate] Running calibration")
         try:
@@ -429,73 +494,48 @@ class PaperManager:
             logger.warning(f"[calibrate] Failed, keeping original scores: {e}")
             return []
 
-    async def _extract_metrics(
-        self, papers: list[dict], provider: "LLMProvider", model: str,
-    ) -> list[dict]:
-        """Extract quantitative metrics from experiment sections."""
-        parts = []
-        for p in papers:
-            exp = p.get("experiment_design", "")[:2000]
-            if exp:
-                parts.append(f"## {p['title']} (paper_id: {p['paper_id']})\n{exp}\n")
-        if not parts:
-            logger.info("[metrics] No experiment content available"); return []
-        user_msg = (
-            "从以下论文实验部分提取共同可量化性能指标（准确率、F1、BLEU、推理时间等）：\n\n"
-            + "\n\n".join(parts) +
-            "\n\n输出 JSON 数组：\n"
-            '[{"metric_name":"准确率","paper_values":{"paper_id_1":0.953},"unit":"%","dataset":"测试集","higher_is_better":true}]\n'
-            "每条必须有 metric_name, paper_values, unit, dataset, higher_is_better。不少于 2 条。"
-        )
-        try:
-            response = await provider.chat_with_retry(
-                model=model,
-                messages=[{"role": "system", "content": "从论文实验部分提取定量性能指标。直接输出 JSON，禁止 Markdown 包裹。"}, {"role": "user", "content": user_msg}],
-                tools=None, response_format={"type": "json_object"},
-            )
-            data = self._safe_json_extract(response.content or "", "metrics")
-            metrics = data.get("metrics", data if isinstance(data, list) else [])
-            if not isinstance(metrics, list): metrics = []
-            logger.info(f"[metrics] Extracted {len(metrics)} metrics")
-            return metrics
-        except Exception as e:
-            logger.warning(f"[metrics] Extraction failed: {e}"); return []
-
     def _compute_formula_overlap(self, papers: list[dict]) -> dict[str, float]:
-        """Phase 3a: Compute formula Jaccard overlap between paper pairs."""
-        paper_formulas: dict[str, set[str]] = {}
+        """Compute formula Jaccard overlap with multi-feature math-vocabulary extraction."""
+
+        def _extract_features(latex: str) -> set[str]:
+            features: set[str] = set()
+            features.update(re.findall(r"\\[a-zA-Z]+", latex))
+            features.update(re.findall(r"\\(begin|end)\{[^}]+\}", latex))
+            features.update(re.findall(r"\\[a-zA-Z]+\{[^}]*\{[^}]*\}", latex))
+            return features
+
+        paper_features: dict[str, set[str]] = {}
         for p in papers:
             pid = p["paper_id"]
             formulas = p.get("formulas", [])
+            all_features: set[str] = set()
             if isinstance(formulas, list):
-                cmds = set()
                 for f in formulas:
-                    if isinstance(f, dict):
-                        latex = f.get("latex", "")
-                    else:
-                        latex = str(f)
-                    cmds.update(re.findall(r"\\[a-zA-Z]+", latex))
-                paper_formulas[pid] = cmds
-            else:
-                paper_formulas[pid] = set()
+                    latex = f.get("latex", "") if isinstance(f, dict) else str(f)
+                    all_features.update(_extract_features(latex))
+            paper_features[pid] = all_features
 
         overlap: dict[str, float] = {}
         pids = [p["paper_id"] for p in papers]
         for i in range(len(pids)):
             for j in range(i + 1, len(pids)):
-                a, b = paper_formulas.get(pids[i], set()), paper_formulas.get(pids[j], set())
+                a, b = paper_features.get(pids[i], set()), paper_features.get(pids[j], set())
                 union = len(a | b)
                 overlap[f"{pids[i]}|{pids[j]}"] = len(a & b) / max(union, 1)
         return overlap
 
     def _compute_citation_overlap(self, papers: list[dict]) -> dict[str, int]:
-        """Phase 3b: Count shared citations between paper pairs."""
+        """Count shared citations between paper pairs with multi-strategy extraction."""
         paper_refs: dict[str, set[str]] = {}
         for p in papers:
             pid = p["paper_id"]
             citation_html = p.get("citation_graph_html", "")
-            # Extract titles from citation graph data
-            titles = set(re.findall(r'"name"\s*:\s*"([^"]+)"', citation_html))
+            titles: set[str] = set()
+            titles.update(re.findall(r'"name"\s*:\s*"([^"]+)"', citation_html))
+            titles.update(re.findall(r'"(?:label|title)"\s*:\s*"([^"]+)"', citation_html))
+            titles.update(re.findall(r'<text[^>]*>([^<]{3,200})</text>', citation_html))
+            if not titles:
+                titles.update(re.findall(r'"(?:id|node_id|ref_id)"\s*:\s*"([^"]+)"', citation_html))
             paper_refs[pid] = titles
 
         overlap: dict[str, int] = {}
@@ -516,7 +556,8 @@ class PaperManager:
         texts = []
         for p in papers:
             parts = []
-            for key in ["system_model", "problem_formulation", "optimization_algorithm", "experiment_design"]:
+            for key in ["system_model", "problem_formulation", "optimization_algorithm", "experiment_design",
+                          "review_theory", "review_engineering", "review_domain"]:
                 t = p.get(key, "")
                 if t:
                     parts.append(t[:2000])
@@ -613,19 +654,45 @@ class PaperManager:
 
         if sc.similarity_matrix:
             lines.append("\n## 论文相似度\n")
+            header = "| 论文 | " + " | ".join(
+                title_map.get(pid, pid)[:15] for pid in sc.paper_ids) + " |"
+            sep = "|------|" + "|".join(["------"] * len(sc.paper_ids)) + "|"
+            lines.append(header)
+            lines.append(sep)
             for i, pid in enumerate(sc.paper_ids):
                 if i < len(sc.similarity_matrix):
-                    lines.append(f"- {title_map.get(pid, pid)[:30]}: {sc.similarity_matrix[i]}")
+                    row = " | ".join(
+                        str(sc.similarity_matrix[i][j]) if j < len(sc.similarity_matrix[i]) else "-"
+                        for j in range(len(sc.paper_ids)))
+                    lines.append(f"| {title_map.get(pid, pid)[:15]} | {row} |")
+
+        if sc.dimensions:
+            lines.append("\n## 各维度关键发现\n")
+            for dim_name, dim in sc.dimensions.items():
+                lines.append(f"### {dim_name}\n")
+                for pid in sc.paper_ids:
+                    title = title_map.get(pid, pid)[:30]
+                    reasons = dim.score_reasons.get(pid, "")
+                    if reasons:
+                        lines.append(f"- **{title}** (score={dim.extracted_scores.get(pid, '?')}): {reasons[:200]}")
+                    items = dim.extracted_items.get(pid, [])
+                    for item in items[:2]:
+                        note = f" [对比: {item.get('comparative_note', '')[:120]}]" if item.get('comparative_note') else ""
+                        lines.append(f"  - {item.get('name', '')}: {item.get('description', '')[:150]}{note}")
+                lines.append("")
 
         lines.append("\n---\n## 各论文摘要\n")
         for p in papers:
             title = p.get("title", p["paper_id"])[:60]
             lines.append(
                 f"### {title}\n"
-                f"- 系统模型: {p.get('system_model', '')[:600]}\n"
-                f"- 问题建模: {p.get('problem_formulation', '')[:600]}\n"
-                f"- 算法方案: {p.get('optimization_algorithm', '')[:600]}\n"
-                f"- 实验设计: {p.get('experiment_design', '')[:600]}\n"
+                f"- 系统模型: {p.get('system_model', '')[:500]}\n"
+                f"- 问题建模: {p.get('problem_formulation', '')[:500]}\n"
+                f"- 算法方案: {p.get('optimization_algorithm', '')[:500]}\n"
+                f"- 实验设计: {p.get('experiment_design', '')[:500]}\n"
+                f"- 理论审稿: {p.get('review_theory', '')[:400]}\n"
+                f"- 工程审稿: {p.get('review_engineering', '')[:400]}\n"
+                f"- 领域审稿: {p.get('review_domain', '')[:400]}\n"
             )
 
         user_msg = (
@@ -662,12 +729,20 @@ class PaperManager:
             "skipped_ids": comparison.skipped_ids,
             "truncation": trunc,
             "created_at": ts,
-            "metrics": comparison.metrics,
         }
         if comparison.structured:
             sc = comparison.structured
             record["structured"] = {
                 "paper_ids": sc.paper_ids,
+                "dimensions": {
+                    dn: {
+                        "name": d.name,
+                        "extracted_scores": d.extracted_scores,
+                        "extracted_items": d.extracted_items,
+                        "score_reasons": d.score_reasons,
+                    }
+                    for dn, d in sc.dimensions.items()
+                },
                 "scores": sc.scores,
                 "formula_overlap": sc.formula_overlap,
                 "citation_overlap": sc.citation_overlap,
@@ -675,6 +750,10 @@ class PaperManager:
                 "chart_data": sc.chart_data,
                 "synthesis_md": sc.synthesis_md,
                 "created_at": sc.created_at,
+                "error": sc.error,
+                "model_used": sc.model_used,
+                "total_time_seconds": sc.total_time_seconds,
+                "phase_times": sc.phase_times,
             }
             record["chart_data"] = comparison.chart_data
         (comp_dir / f"{comp_id}.json").write_text(
