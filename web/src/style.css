@@ -86,6 +86,7 @@ h4 { font-size: 14px }
 
 .navi {
   display: flex; align-items: center; gap: var(--s-3);
+  text-decoration: none;
   background: transparent; border: 1px solid transparent;
   color: rgba(226, 232, 240, 0.4);
   padding: 10px var(--s-3);
@@ -216,7 +217,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--c-accent); box-s
 .dtabs { max-width: 100%; overflow-x: auto }
 
 .st {
-  background: transparent; border: none; color: var(--c-text-secondary);
+  background: transparent; border: none; color: var(--c-text-secondary); text-decoration: none;
   padding: 7px var(--s-4); border-radius: var(--r-sm); font-size: 12px;
   font-weight: 500; cursor: pointer; transition: all var(--t-fast);
   font-family: var(--ff-body); white-space: nowrap;
