@@ -212,7 +212,7 @@ class AgentLoop:
         '''控制Web搜索、Shell执行等工具的开关与配置'''
         self.web_config = web_config or WebToolsConfig()
         self.exec_config = exec_config or ExecToolConfig()
-        _tc = tools_config or ToolsConfig()
+        self._config = tools_config or ToolsConfig()
 
         self.restrict_to_workspace = restrict_to_workspace
         '是否限制文件操作在 workspace 内'
@@ -313,8 +313,8 @@ class AgentLoop:
         # =========================8.工具注册===============================
         self._register_default_tools()
         '注册内置工具（文件、搜索、Shell、Message、Spawn、Cron 等）'
-        if _tc.my.enable:
-            self.tools.register(MyTool(loop=self, modify_allowed=_tc.my.allow_set))
+        if self._config.my.enable:
+            self.tools.register(MyTool(loop=self, modify_allowed=self._config.my.allow_set))
         '若 tools_config.my.enable 为真，还会注册 MyTool，让 Agent 可以查看/修改自身部分配置'
 
         # =========================9 钩子系统===============================

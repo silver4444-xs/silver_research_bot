@@ -6,9 +6,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 import asyncio
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -96,6 +98,25 @@ def _get_rag() -> ResearchRAG:
         rag = ResearchRAG(provider=provider, config=config.rag)
         _rag_initialized = True
     return rag
+
+
+_agent_loop: "AgentLoop | None" = None
+_agent_initialized = False
+_agent_init_lock = asyncio.Lock()
+
+
+async def _get_agent_loop() -> "AgentLoop":
+    global _agent_loop, _agent_initialized
+    if _agent_initialized:
+        return _agent_loop  # type: ignore[return-value]
+    async with _agent_init_lock:
+        if _agent_initialized:
+            return _agent_loop  # type: ignore[return-value]
+        from silver_research_bot.SilverAgent import silver_research_bot
+        bot = silver_research_bot.from_config()
+        _agent_loop = bot._loop
+        _agent_initialized = True
+        return _agent_loop
 
 
 @app.get("/api/health")
@@ -274,14 +295,94 @@ async def rag_reindex() -> dict[str, Any]:
 
 
 @app.post("/api/agent/chat")
-def chat(request: ChatRequest) -> dict[str, Any]:
-    reply = _build_chat_reply(request)
-    if request.run_id:
+async def chat(request: ChatRequest) -> dict[str, Any]:
+    loop = await _get_agent_loop()
+    session_key = f"web:{request.run_id or 'default'}"
+    response = await loop.process_direct(
+        content=request.message,
+        session_key=session_key,
+        channel="web",
+        chat_id=request.run_id or "default",
+    )
+    content = response.content if response else ""
+    return {"reply": content}
+
+
+@app.post("/api/agent/chat/stream")
+async def chat_stream(request: ChatRequest):
+    loop = await _get_agent_loop()
+    session_key = f"web:{request.run_id or 'default'}"
+
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def on_stream(token: str) -> None:
+        await queue.put(token)
+
+    async def on_stream_end(**kwargs: Any) -> None:
+        await queue.put(None)
+
+    async def _run() -> None:
         try:
-            reply["run"] = engine.summarize_run(request.run_id)
+            await loop.process_direct(
+                content=request.message,
+                session_key=session_key,
+                channel="web",
+                chat_id=request.run_id or "default",
+                on_stream=on_stream,
+                on_stream_end=on_stream_end,
+            )
         except Exception:
-            reply["run"] = None
-    return reply
+            logger.exception("Agent stream error for session {}", session_key)
+            await queue.put(None)
+
+    async def event_generator():
+        task = asyncio.create_task(_run())
+        try:
+            while True:
+                token = await queue.get()
+                if token is None:
+                    break
+                yield f"data: {json.dumps({'token': token})}\n\n"
+        finally:
+            if not task.done():
+                task.cancel()
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/agent/sessions")
+async def list_agent_sessions() -> list[dict[str, Any]]:
+    loop = await _get_agent_loop()
+    all_sessions = loop.sessions.list_sessions()
+    return [s for s in all_sessions if s["key"].startswith("web:")]
+
+
+@app.get("/api/agent/sessions/{session_id}")
+async def get_agent_session(session_id: str) -> dict[str, Any]:
+    loop = await _get_agent_loop()
+    key = f"web:{session_id}"
+    data = loop.sessions.read_session_file(key)
+    if data is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return data
+
+
+@app.delete("/api/agent/sessions/{session_id}")
+async def delete_agent_session(session_id: str) -> dict[str, Any]:
+    loop = await _get_agent_loop()
+    key = f"web:{session_id}"
+    if not loop.sessions.delete_session(key):
+        raise HTTPException(status_code=404, detail="session not found")
+    return {"status": "deleted", "session_id": session_id}
 
 
 # ── Paper Analysis API ────────────────────────────────────────────
@@ -978,23 +1079,3 @@ def root() -> dict[str, str]:
 frontend_dist = __import__("pathlib").Path(__file__).resolve().parent.parent / "web" / "dist"
 if frontend_dist.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
-
-
-def _build_chat_reply(request: ChatRequest) -> dict[str, Any]:
-    text = request.message.strip()
-    if any(keyword in text for keyword in ["批量", "batch", "多个", "基准"]):
-        reply = "我建议先整理多个主题，再用批量模式生成统一实验蓝图，并保留每个 run 的独立审计记录。"
-        action = "batch"
-    elif any(keyword in text for keyword in ["论文", "latex", "草稿", "写作"]):
-        reply = "我会根据真实实验数据生成 LaTeX 草稿，并优先保留方法、实验设置、结果和讨论四个部分。"
-        action = "paper"
-    elif any(keyword in text for keyword in ["实验", "训练", "cpu", "执行"]):
-        reply = "我建议先创建工作区，再执行 CPU 实验并导出 results、metrics、summary 和审计日志。"
-        action = "execute"
-    elif any(keyword in text for keyword in ["文献", "rag", "检索"]):
-        reply = "下一步可以接入文献检索与笔记整理模块，让 Agent 在研究之前先做信息汇总和假设归纳。"
-        action = "rag"
-    else:
-        reply = "请告诉我研究主题、假设与约束。我可以帮助你生成 brief、实验计划、代码骨架、分析和论文初稿。"
-        action = "ideation"
-    return {"reply": reply, "suggested_action": action, "guidelines": ["先定义研究问题与指标", "再生成可执行实验代码", "最后用真实结果写论文草稿"]}
