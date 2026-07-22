@@ -204,6 +204,138 @@ flowchart TB
 
 ---
 
+## 🔁 Agent 循环详解
+
+Agent 核心 ReAct 循环的完整执行流程，包括消息总线、会话恢复、上下文构建、五步治理、工具执行、检查点和中轮注入：
+
+```mermaid
+%%{init: {'theme':'base', 'themeVariables': { 'fontSize':'13px','fontFamily':'system-ui, sans-serif' }}}%%
+flowchart TD
+    BUS["📨 MessageBus.consume_inbound()"]:::entry --> LOAD
+
+    subgraph SESSION["💾 会话恢复"]
+        LOAD["加载 / 创建 Session"]:::session
+        CKPT{"有运行时检查点？"}:::decision
+        RESTORE["恢复未完成的消息<br/>assistant + 工具结果 + 报错占位符<br/>去重融合避免重复"]:::session
+        PENDING{"有 pending_user_turn？"}:::decision
+        APOLOGY["追加道歉消息<br/>避免用户消息被吞"]:::session
+        LOAD --> CKPT
+        CKPT -->|"是"| RESTORE
+        CKPT -->|"否"| PENDING
+        RESTORE --> PENDING
+        PENDING -->|"是"| APOLOGY
+        PENDING -->|"否"| BUILD
+        APOLOGY --> BUILD
+    end
+
+    BUILD["🏗 ContextBuilder.build_messages()"]:::context
+
+    subgraph CTX["📋 上下文组装"]
+        SYS["System Prompt<br/>身份 · 引导文件 · 记忆<br/>技能 · 近期历史"]:::context
+        SUM{"AutoCompact<br/>空闲会话摘要？"}:::decision
+        INJECT["注入会话摘要<br/>「已离开 X 分钟<br/>之前聊了...」"]:::context
+        BUILD --> SYS
+        SYS --> SUM
+        SUM -->|"有摘要"| INJECT
+        SUM -->|"无"| CONS
+        INJECT --> CONS
+    end
+
+    CONS{"Consolidator<br/>Token 超预算？"}:::decision
+    COMPRESS["LLM 压缩旧消息块 → 摘要<br/>归档 history.jsonl<br/>更新 last_consolidated 游标"]:::compress
+    CONS -->|"是"| COMPRESS
+    CONS -->|"否"| LOOP_START
+    COMPRESS --> LOOP_START
+
+    LOOP_START(["🔄 ReAct 循环开始<br/>iteration = 0"]):::loop
+
+    subgraph GOVERN["🧹 五步上下文治理（每轮 LLM 调用前）"]
+        direction TB
+        G1["1️⃣ 清理孤儿结果<br/>移除无对应 tool_calls 的 tool 消息"]:::govern
+        G2["2️⃣ 缺失回填<br/>为已有 tool_calls 补占位符结果"]:::govern
+        G3["3️⃣ 微压缩<br/>只读工具结果 > 500 字符<br/>保留最近 10 条，其余替换占位符"]:::govern
+        G4["4️⃣ 工具结果截断<br/>单个结果不超过 max_tool_result_chars"]:::govern
+        G5["5️⃣ 历史窗口裁剪<br/>Token 仍超限时裁剪最旧消息"]:::govern
+        G1 --> G2 --> G3 --> G4 --> G5
+    end
+
+    LLM["🤖 LLM 调用<br/>Provider.chat_with_retry()<br/>自动重试 · 错误分类 · 图片降级"]:::llm
+
+    CHECK_RESP{"LLM 返回类型？"}:::decision
+
+    subgraph TOOLS["🔧 工具执行"]
+        SAVE_CKPT1["保存检查点<br/>phase: awaiting_tools"]:::checkpoint
+        EXEC["并行 / 串行执行工具<br/>重复调用拦截（同签名 > 3 次阻断）<br/>白名单 · 超时 · 沙箱"]:::tools
+        SAVE_CKPT2["保存检查点<br/>phase: tools_completed"]:::checkpoint
+        DRAIN1{"中轮注入？"}:::decision
+        SAVE_CKPT1 --> EXEC --> SAVE_CKPT2 --> DRAIN1
+    end
+
+    subgraph FINAL["✅ 最终回复处理"]
+        EMPTY{"内容为空？"}:::decision
+        RETRY_EMPTY["空响应重试<br/>最多 2 次"]:::final
+        LENGTH{"finish_reason=length？"}:::decision
+        RETRY_LENGTH["追加「继续」指令<br/>最多 3 次"]:::final
+        DRAIN2{"中轮注入？"}:::decision
+        APPEND["追加 assistant 消息<br/>保存最终检查点<br/>phase: final_response"]:::final
+
+        EMPTY -->|"是"| RETRY_EMPTY
+        EMPTY -->|"否"| LENGTH
+        RETRY_EMPTY -->|"未超限"| GOVERN
+        RETRY_EMPTY -->|"超限"| DRAIN2
+        LENGTH -->|"是"| RETRY_LENGTH
+        LENGTH -->|"否"| DRAIN2
+        RETRY_LENGTH -->|"未超限"| GOVERN
+        RETRY_LENGTH -->|"超限"| DRAIN2
+        DRAIN2 -->|"有注入"| GOVERN
+        DRAIN2 -->|"无注入"| APPEND
+    end
+
+    ERROR_STOP["❌ 错误终止<br/>tool_error / error<br/>empty_final_response"]:::error
+
+    LOOP_START --> GOVERN
+    GOVERN --> LLM
+    LLM --> CHECK_RESP
+    CHECK_RESP -->|"有 tool_calls"| TOOLS
+    CHECK_RESP -->|"无 tool_calls"| FINAL
+    DRAIN1 -->|"有注入"| GOVERN
+    DRAIN1 -->|"无注入"| GOVERN
+    TOOLS -->|"致命错误"| ERROR_STOP
+
+    APPEND --> DONE([✅ 循环结束])
+    ERROR_STOP --> SAVE
+
+    DONE --> SAVE["💾 _save_turn()<br/>持久化对话历史"]:::session
+    SAVE --> PUB["📤 publish_outbound()<br/>发送响应到消息总线"]:::session
+
+    MAX_ITER{"达到 max_iterations？"}:::decision
+    CHECK_RESP -.->|"每轮检查"| MAX_ITER
+    MAX_ITER -.->|"是 → 生成降级消息"| DONE
+
+    classDef entry fill:#5b9bd5,stroke:#3b7abf,color:#fff,stroke-width:2.5px
+    classDef session fill:#7c7de6,stroke:#5e5fc9,color:#fff,stroke-width:2.5px
+    classDef context fill:#9b8aeb,stroke:#7b6ad4,color:#fff,stroke-width:2.5px
+    classDef decision fill:#e8a840,stroke:#c68a2e,color:#1e1b4b,stroke-width:2px
+    classDef compress fill:#e8737a,stroke:#cd5660,color:#fff,stroke-width:2.5px
+    classDef loop fill:#4dbf8c,stroke:#35a06e,color:#fff,stroke-width:3px
+    classDef govern fill:#94a3b8,stroke:#708098,color:#fff,stroke-width:2px
+    classDef llm fill:#f59e0b,stroke:#d97706,color:#1e1b4b,stroke-width:2.5px
+    classDef tools fill:#06b6d4,stroke:#0891b2,color:#fff,stroke-width:2.5px
+    classDef checkpoint fill:#a78bfa,stroke:#7c3aed,color:#fff,stroke-width:2px
+    classDef final fill:#10b981,stroke:#059669,color:#fff,stroke-width:2.5px
+    classDef error fill:#ef4444,stroke:#dc2626,color:#fff,stroke-width:2.5px
+
+    style SESSION fill:#eef2ff,stroke:#c7d2fe,color:#3730a3
+    style CTX fill:#f5f3ff,stroke:#ddd6fe,color:#6d28d9
+    style GOVERN fill:#f9fafb,stroke:#e5e7eb,color:#374151
+    style TOOLS fill:#ecfeff,stroke:#a5f3fc,color:#155e75
+    style FINAL fill:#ecfdf5,stroke:#a7f3d0,color:#065f46
+```
+
+> **关键防护机制**：① 重复工具调用拦截（同签名 > 3 次阻断） ② `max_iterations` 硬上限（默认 20） ③ 空响应重试（最多 2 次） ④ 输出截断续写（最多 3 次） ⑤ 中轮注入循环限制（最多 5 周期）。检查点在三个边界保存（工具调用前 / 工具完成后 / 最终回复），崩溃恢复时自动重建消息并去重融合。
+
+---
+
 ## 🛠 技术栈
 
 | 层 | 技术 |
