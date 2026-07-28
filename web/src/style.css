@@ -710,3 +710,7 @@ pre { font-size: 12px; background: var(--c-bg-input); color: var(--c-text); padd
   .editor-area { grid-template-columns: 1fr }
   .pt-stages { grid-template-columns: 1fr 1fr }
 }
+
+/* AnalysisReport global helpers */
+.ar-wrapper .cc-body table { width: 100%; }
+.ar-wrapper .cc-body img { max-width: 100%; border-radius: var(--r-md); }
