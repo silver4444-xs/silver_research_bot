@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from loguru import logger
+
 from silver_research_bot.paper_analyzer.models import (
     AnalysisPlan, PaperAnalysis, StageResult,
 )
@@ -216,6 +218,28 @@ class PaperOrchestrator:
                 artifacts.append({"name": fname, "path": str(paper_dir / fname), "kind": "review"})
             _mark(plan, "review", "completed")
             self._write_progress(paper_dir, "review", "completed", f"三视角审稿完成")
+
+            # Parse review scores from markdown output and save structured scores
+            try:
+                import re
+                review_scores = {}
+                for rkey, rtext in reviews.items():
+                    # Find score pattern: "总体评价 (1-10分)" followed by a number
+                    m = re.search(r'(?:总体评价|总分|综合评分)[^\d]*(\d+)(?:\s*分|\s*/10)', rtext)
+                    if not m:
+                        m = re.search(r'(\d+)\s*/\s*10', rtext)
+                    if m:
+                        score = int(m.group(1))
+                        review_scores[rkey] = min(10, max(1, score))
+                if review_scores:
+                    vals = list(review_scores.values())
+                    review_scores["overall"] = round(sum(vals) / len(vals), 1)
+                (paper_dir / "review_scores.json").write_text(
+                    json.dumps(review_scores, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            except Exception:
+                logger.exception("Failed to parse review scores")
         except Exception as e:
             _mark(plan, "review", "completed")
             self._write_progress(paper_dir, "review", "completed", f"审稿跳过: {e}")

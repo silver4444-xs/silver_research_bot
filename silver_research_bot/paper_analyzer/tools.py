@@ -183,6 +183,7 @@ class AnalyzePaperTool(Tool):
                         paper_dir = ws_root / "papers" / result["paper_id"]
 
                     summary = {
+                        "paper_id": result["paper_id"],
                         "title": result["title"],
                         "language": result["language"],
                         "page_count": 0,
@@ -208,11 +209,16 @@ class AnalyzePaperTool(Tool):
                             summary["figure_count"] = len(ed.get("figures", []))
                             summary["venue"] = ed.get("venue", "")
 
-                        # Read audit_report.json for scores
+                        # Read review_scores.json for scores
+                        rf = paper_dir / "review_scores.json"
+                        if rf.exists():
+                            rd = json.loads(rf.read_text(encoding="utf-8"))
+                            summary["scores"] = rd
+
+                        # Read audit_report.json for audit status
                         af = paper_dir / "audit_report.json"
                         if af.exists():
                             ad = json.loads(af.read_text(encoding="utf-8"))
-                            summary["scores"] = ad.get("dimension_scores", {})
                             summary["audit_passed"] = ad.get("passed", True)
                             summary["issue_count"] = len(ad.get("issues", []))
 
