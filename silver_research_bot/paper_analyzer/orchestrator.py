@@ -231,12 +231,25 @@ class PaperOrchestrator:
                 has_translation=analysis.translation is not None)
         analysis.completed_at = _utc_now()
 
+        # Build key_findings: collect up to 3 meaningful sentences from four-dim analysis
+        key_findings = []
+        for dim_key in ["system_model", "problem_formulation", "optimization_algorithm"]:
+            dim_text = dim_results.get(dim_key, "")
+            if dim_text and len(dim_text) > 100:
+                first_line = dim_text.strip().split("\n")[0]
+                if len(first_line) > 20:
+                    key_findings.append(first_line[:120])
+                    if len(key_findings) >= 3:
+                        break
+
         (paper_dir / "analysis_summary.json").write_text(
             json.dumps({
                 "paper_id": analysis.paper_id,
                 "has_translation": analysis.translation is not None,
                 "artifacts": analysis.artifacts,
                 "completed_at": analysis.completed_at,
+                "key_findings": key_findings,
+                "venue": extracted.get("venue", ""),
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
