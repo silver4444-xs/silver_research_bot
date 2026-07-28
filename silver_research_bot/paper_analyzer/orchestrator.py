@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
+
+from loguru import logger
 
 from silver_research_bot.paper_analyzer.models import (
     AnalysisPlan, PaperAnalysis, StageResult,
@@ -31,18 +34,28 @@ class PaperOrchestrator:
         self.model = model
         self.workspace = Path(workspace)
         self._manager = None
+        self._on_progress: Callable[[dict], Awaitable[None]] | None = None
 
     def set_manager(self, manager) -> None:
         self._manager = manager
 
-    def _write_progress(self, paper_dir, stage, status, msg=""):
+    async def _write_progress(self, paper_dir, stage, status, msg=""):
         (paper_dir / "progress.json").write_text(json.dumps({
             "stage": stage, "status": status, "message": msg,
             "updated_at": _utc_now(),
         }, ensure_ascii=False), encoding="utf-8")
+        if self._on_progress:
+            await self._on_progress({"stage": stage, "status": status, "message": msg})
 
-    async def analyze_paper(self, pdf_path: str, language: str = "auto", paper_meta: dict | None = None) -> dict[str, Any]:
-        """完整论文分析 Pipeline 入口。若提供 paper_meta 则跳过 Stage 0 提取。"""
+    async def analyze_paper(
+        self, pdf_path: str, language: str = "auto", paper_meta: dict | None = None,
+        *, on_progress: Callable[[dict], Awaitable[None]] | None = None,
+    ) -> dict[str, Any]:
+        """完整论文分析 Pipeline 入口。若提供 paper_meta 则跳过 Stage 0 提取。
+
+        on_progress: 可选异步回调，接收 {"stage","status","message"} 字典，用于实时推送进度。"""
+        self._on_progress = on_progress
+        logger.info("analyze_paper orchestrator start: on_progress_wired={}", on_progress is not None)
         pdf_path_abs = str(Path(pdf_path).resolve())
         if paper_meta:
             meta_dict = paper_meta
@@ -57,7 +70,7 @@ class PaperOrchestrator:
             paper_dir = Path(meta_dict["workspace_dir"])
             full_text = meta_dict["full_text"]
             extracted = json.loads((paper_dir / "extracted.json").read_text(encoding="utf-8"))
-            self._write_progress(paper_dir, "parse", "completed", f"解析完成，{meta_dict['page_count']}页，{meta_dict['formula_count']}个公式")
+            await self._write_progress(paper_dir, "parse", "completed", f"解析完成，{meta_dict['page_count']}页，{meta_dict['formula_count']}个公式")
         formulas: list[dict] = extracted.get("formulas", [])
         figures: list[dict] = extracted.get("figures", [])
         tables: list[dict] = extracted.get("tables", [])
@@ -87,10 +100,10 @@ class PaperOrchestrator:
             from silver_research_bot.paper_analyzer.translator import translate_paper
             from silver_research_bot.utils.langsmith_utils import trace_pipeline_stage
 
-            self._write_progress(paper_dir, "translate", "running", "正在翻译全文（公式→LaTeX）…")
+            await self._write_progress(paper_dir, "translate", "running", "正在翻译全文（公式→LaTeX）…")
             _mark(plan, "translate", "running")
             with trace_pipeline_stage("translate", paper_id=meta_dict["paper_id"]) as tr_run:
-                translation, chunk_log = await translate_paper(full_text, self.provider, self.model, figures=figures, tables=tables, paper_id=meta_dict["paper_id"])
+                translation, chunk_log = await translate_paper(full_text, self.provider, self.model, figures=figures, tables=tables, paper_id=meta_dict["paper_id"], on_progress=self._on_progress)
                 if tr_run is not None:
                     tr_run.outputs = {"chars": len(translation), "paper_id": meta_dict["paper_id"]}
             (paper_dir / "translation.md").write_text(translation, encoding="utf-8")
@@ -104,14 +117,18 @@ class PaperOrchestrator:
                 "kind": "translation",
             })
             _mark(plan, "translate", "completed")
-            self._write_progress(paper_dir, "translate", "completed", "翻译完成")
+            await self._write_progress(paper_dir, "translate", "completed", "翻译完成")
 
         # ─── Stage 1b: Analyze (4 dimensions parallel) ───
         from silver_research_bot.paper_analyzer.analyzer import analyze_dimensions
+        from silver_research_bot.utils.langsmith_utils import trace_pipeline_stage
 
-        self._write_progress(paper_dir, "analyze", "running", "正在四维系统分析（系统模型/问题表述/优化算法/实验设计）…")
+        await self._write_progress(paper_dir, "analyze", "running")
         _mark(plan, "analyze", "running")
-        dim_results = await analyze_dimensions(full_text, self.provider, self.model, lang)
+        with trace_pipeline_stage("analyze", paper_id=meta_dict["paper_id"]) as tr_run:
+            dim_results = await analyze_dimensions(full_text, self.provider, self.model, lang)
+            if tr_run is not None:
+                tr_run.outputs = {"dimensions": list(dim_results.keys())}
 
         dim_files = {
             "system_model": "analysis_system_model.md",
@@ -128,23 +145,25 @@ class PaperOrchestrator:
                 "kind": f"analysis_{key}",
             })
         _mark(plan, "analyze", "completed")
-        self._write_progress(paper_dir, "analyze", "completed", "四维分析完成")
+        await self._write_progress(paper_dir, "analyze", "completed", "四维分析完成")
 
         # ─── Stage 2: Formula explanations ───
         from silver_research_bot.paper_analyzer.formula_explainer import explain_formulas
 
-        self._write_progress(paper_dir, "formula_explain", "running", "正在逐条解释公式…")
+        await self._write_progress(paper_dir, "formula_explain", "running", "正在逐条解释公式…")
         _mark(plan, "formula_explain", "running")
-        # English papers: extract complete $$...$$ formulas from translation
-        if lang == "en" and analysis.translation:
-            formulas_text = await explain_formulas(
-                formulas, full_text, self.provider, self.model,
-                translation_text=analysis.translation,
-            )
-        else:
-            formulas_text = await explain_formulas(
-                formulas, full_text, self.provider, self.model,
-            )
+        with trace_pipeline_stage("formula", paper_id=meta_dict["paper_id"]) as tr_run:
+            if lang == "en" and analysis.translation:
+                formulas_text = await explain_formulas(
+                    formulas, full_text, self.provider, self.model,
+                    translation_text=analysis.translation,
+                )
+            else:
+                formulas_text = await explain_formulas(
+                    formulas, full_text, self.provider, self.model,
+                )
+            if tr_run is not None:
+                tr_run.outputs = {"chars": len(formulas_text), "formulas_in_pdf": len(formulas)}
         (paper_dir / "formula_explanations.md").write_text(formulas_text, encoding="utf-8")
         artifacts.append({
             "name": "formula_explanations.md",
@@ -158,25 +177,28 @@ class PaperOrchestrator:
         if pdf_fm_count > 0 and card_count > 0:
             ratio = card_count / pdf_fm_count
             if ratio < 0.5:
-                self._write_progress(paper_dir, "formula_explain", "completed",
+                await self._write_progress(paper_dir, "formula_explain", "completed",
                     f"公式解读完成 ({card_count}张卡片 vs PDF中{pdf_fm_count}个公式 — 可能丢失公式)")
             elif ratio > 2.0:
-                self._write_progress(paper_dir, "formula_explain", "completed",
+                await self._write_progress(paper_dir, "formula_explain", "completed",
                     f"公式解读完成 ({card_count}张卡片 vs PDF中{pdf_fm_count}个碎片 — LLM重建了更多完整公式)")
             else:
-                self._write_progress(paper_dir, "formula_explain", "completed",
+                await self._write_progress(paper_dir, "formula_explain", "completed",
                     f"公式解读完成 ({card_count}张卡片)")
         else:
-            self._write_progress(paper_dir, "formula_explain", "completed", "公式解读完成")
+            await self._write_progress(paper_dir, "formula_explain", "completed", "公式解读完成")
 
         # ─── Stage 3: Visualization ───
         from silver_research_bot.paper_analyzer.visualizer import generate_visualization
 
-        self._write_progress(paper_dir, "visualize", "running", "正在生成 Mermaid 可视化图表…")
+        await self._write_progress(paper_dir, "visualize", "running", "正在生成 Mermaid 可视化图表…")
         _mark(plan, "visualize", "running")
-        vis_html = await generate_visualization(
-            dim_results, meta_dict["title"], self.provider, self.model,
-        )
+        with trace_pipeline_stage("visualize", paper_id=meta_dict["paper_id"]) as tr_run:
+            vis_html = await generate_visualization(
+                dim_results, meta_dict["title"], self.provider, self.model,
+            )
+            if tr_run is not None:
+                tr_run.outputs = {"chars": len(vis_html)}
         (paper_dir / "analysis_visualization.html").write_text(vis_html, encoding="utf-8")
         analysis.visualization_html = vis_html
         artifacts.append({
@@ -185,40 +207,46 @@ class PaperOrchestrator:
             "kind": "visualization",
         })
         _mark(plan, "visualize", "completed")
-        self._write_progress(paper_dir, "visualize", "completed", "可视化生成完成")
+        await self._write_progress(paper_dir, "visualize", "completed", "可视化生成完成")
 
         # ─── Stage 4a: Citation Graph ───
         from silver_research_bot.paper_analyzer.citation_graph import extract_references, build_citation_html
 
-        self._write_progress(paper_dir, "citation", "running", "正在构建引用图谱…")
+        await self._write_progress(paper_dir, "citation", "running", "正在构建引用图谱…")
         _mark(plan, "citation", "running")
-        try:
-            refs = await extract_references(full_text, self.provider, self.model)
-            cit_html = await build_citation_html(refs, meta_dict["title"], self.provider, self.model)
-            (paper_dir / "citation_graph.html").write_text(cit_html, encoding="utf-8")
-            artifacts.append({"name": "citation_graph.html", "path": str(paper_dir / "citation_graph.html"), "kind": "citation"})
-            _mark(plan, "citation", "completed")
-            self._write_progress(paper_dir, "citation", "completed", f"引用图谱生成完成，{len(refs)}篇参考文献")
-        except Exception as e:
-            _mark(plan, "citation", "completed")
-            self._write_progress(paper_dir, "citation", "completed", f"引用图谱跳过: {e}")
+        with trace_pipeline_stage("citation", paper_id=meta_dict["paper_id"]) as tr_run:
+            try:
+                refs = await extract_references(full_text, self.provider, self.model)
+                cit_html = await build_citation_html(refs, meta_dict["title"], self.provider, self.model)
+                if tr_run is not None:
+                    tr_run.outputs = {"ref_count": len(refs), "html_chars": len(cit_html)}
+                (paper_dir / "citation_graph.html").write_text(cit_html, encoding="utf-8")
+                artifacts.append({"name": "citation_graph.html", "path": str(paper_dir / "citation_graph.html"), "kind": "citation"})
+                _mark(plan, "citation", "completed")
+                await self._write_progress(paper_dir, "citation", "completed", f"引用图谱生成完成，{len(refs)}篇参考文献")
+            except Exception as e:
+                _mark(plan, "citation", "completed")
+                await self._write_progress(paper_dir, "citation", "completed", f"引用图谱跳过: {e}")
 
         # ─── Stage 4b: A/B Review ───
         from silver_research_bot.paper_analyzer.reviewer import generate_reviews
 
-        self._write_progress(paper_dir, "review", "running", "正在多视角审稿…")
+        await self._write_progress(paper_dir, "review", "running", "正在多视角审稿…")
         _mark(plan, "review", "running")
-        try:
-            reviews = await generate_reviews(full_text, meta_dict["title"], self.provider, self.model)
-            for key, text in reviews.items():
-                fname = f"review_{key}.md"
-                (paper_dir / fname).write_text(text, encoding="utf-8")
-                artifacts.append({"name": fname, "path": str(paper_dir / fname), "kind": "review"})
-            _mark(plan, "review", "completed")
-            self._write_progress(paper_dir, "review", "completed", f"三视角审稿完成")
-        except Exception as e:
-            _mark(plan, "review", "completed")
-            self._write_progress(paper_dir, "review", "completed", f"审稿跳过: {e}")
+        with trace_pipeline_stage("review", paper_id=meta_dict["paper_id"]) as tr_run:
+            try:
+                reviews = await generate_reviews(full_text, meta_dict["title"], self.provider, self.model)
+                if tr_run is not None:
+                    tr_run.outputs = {"perspectives": list(reviews.keys())}
+                for key, text in reviews.items():
+                    fname = f"review_{key}.md"
+                    (paper_dir / fname).write_text(text, encoding="utf-8")
+                    artifacts.append({"name": fname, "path": str(paper_dir / fname), "kind": "review"})
+                _mark(plan, "review", "completed")
+                await self._write_progress(paper_dir, "review", "completed", "三视角审稿完成")
+            except Exception as e:
+                _mark(plan, "review", "completed")
+                await self._write_progress(paper_dir, "review", "completed", f"审稿跳过: {e}")
 
         # ─── Finalize ───
         analysis.artifacts = artifacts
@@ -231,12 +259,25 @@ class PaperOrchestrator:
                 has_translation=analysis.translation is not None)
         analysis.completed_at = _utc_now()
 
+        # Build key_findings: collect up to 3 meaningful sentences from four-dim analysis
+        key_findings = []
+        for dim_key in ["system_model", "problem_formulation", "optimization_algorithm"]:
+            dim_text = dim_results.get(dim_key, "")
+            if dim_text and len(dim_text) > 100:
+                first_line = dim_text.strip().split("\n")[0]
+                if len(first_line) > 20:
+                    key_findings.append(first_line[:120])
+                    if len(key_findings) >= 3:
+                        break
+
         (paper_dir / "analysis_summary.json").write_text(
             json.dumps({
                 "paper_id": analysis.paper_id,
                 "has_translation": analysis.translation is not None,
                 "artifacts": analysis.artifacts,
                 "completed_at": analysis.completed_at,
+                "key_findings": key_findings,
+                "venue": extracted.get("venue", ""),
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -245,6 +286,7 @@ class PaperOrchestrator:
         if self._manager:
             self._manager.register_paper(meta_dict, analysis, artifacts)
 
+        self._on_progress = None
         return {
             "paper_id": meta_dict["paper_id"],
             "title": meta_dict["title"],
