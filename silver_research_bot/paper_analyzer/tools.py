@@ -84,6 +84,71 @@ class AnalyzePaperTool(Tool):
         self._event_emitter = emitter
         logger.info("analyze_paper SSE emitter wired: %s", emitter is not None)
 
+    async def _emit_analysis_complete(self, paper_id: str, ws_root, result_title: str = "",
+                                       result_language: str = "", result_artifacts: list | None = None,
+                                       result_workspace_dir: str = "") -> None:
+        """Emit analysis_complete SSE event from existing paper data."""
+        if not self._event_emitter:
+            return
+        try:
+            paper_dir = ws_root / "papers" / paper_id
+            summary = {
+                "paper_id": paper_id,
+                "title": result_title,
+                "language": result_language or "en",
+                "page_count": 0,
+                "formula_count": 0,
+                "figure_count": 0,
+                "has_translation": False,
+                "scores": {},
+                "audit_passed": True,
+                "issue_count": 0,
+                "key_findings": [],
+                "artifacts": result_artifacts or [],
+                "workspace_dir": result_workspace_dir or str(paper_dir),
+                "venue": "",
+            }
+            if paper_dir.exists():
+                ef = paper_dir / "extracted.json"
+                if ef.exists():
+                    ed = json.loads(ef.read_text(encoding="utf-8"))
+                    if not summary["title"]:
+                        summary["title"] = ed.get("title", "")
+                    if not summary["language"] or summary["language"] == "auto":
+                        summary["language"] = ed.get("language", "en")
+                    summary["page_count"] = ed.get("page_count", 0)
+                    summary["formula_count"] = ed.get("formula_count", 0)
+                    summary["figure_count"] = len(ed.get("figures", []))
+                    summary["venue"] = ed.get("venue", "")
+                rf = paper_dir / "review_scores.json"
+                if rf.exists():
+                    summary["scores"] = json.loads(rf.read_text(encoding="utf-8"))
+                af = paper_dir / "audit_report.json"
+                if af.exists():
+                    ad = json.loads(af.read_text(encoding="utf-8"))
+                    summary["audit_passed"] = ad.get("passed", True)
+                    summary["issue_count"] = len(ad.get("issues", []))
+                sf = paper_dir / "analysis_summary.json"
+                if sf.exists():
+                    sd = json.loads(sf.read_text(encoding="utf-8"))
+                    summary["key_findings"] = sd.get("key_findings", [])
+                    summary["has_translation"] = sd.get("has_translation", False)
+                # Collect artifact filenames from disk
+                if not summary["artifacts"]:
+                    artifacts = []
+                    for fn in sorted(paper_dir.glob("*.md")):
+                        artifacts.append(fn.name)
+                    for fn in sorted(paper_dir.glob("*.html")):
+                        artifacts.append(fn.name)
+                    summary["artifacts"] = artifacts
+            await self._event_emitter(json.dumps({
+                "type": "analysis_complete",
+                "paper_id": paper_id,
+                "summary": summary,
+            }, ensure_ascii=False))
+        except Exception:
+            logger.exception("Failed to emit analysis_complete event")
+
     async def execute(self, pdf_path: str, language: str = "auto", paper_id: str = "", **kwargs):
         logger.info("analyze_paper execute start: emitter_wired=%s", self._event_emitter is not None)
         if not self._orchestrator:
@@ -105,6 +170,11 @@ class AnalyzePaperTool(Tool):
                     if pf.exists():
                         progress = json.loads(pf.read_text(encoding="utf-8"))
                         if progress.get("stage") == "review" and progress.get("status") == "completed":
+                            await self._emit_analysis_complete(
+                                paper_id, ws_root,
+                                result_title=extracted.get("title", ""),
+                                result_language=extracted.get("language", "auto"),
+                            )
                             return _already_analyzed_response(paper_id, extracted, ws_root)
                     paper_meta = {
                         "paper_id": paper_id,
@@ -144,6 +214,11 @@ class AnalyzePaperTool(Tool):
                             if pf.exists():
                                 progress = json.loads(pf.read_text(encoding="utf-8"))
                                 if progress.get("stage") == "review" and progress.get("status") == "completed":
+                                    await self._emit_analysis_complete(
+                                        d.name, ws_root,
+                                        result_title=extracted.get("title", ""),
+                                        result_language=extracted.get("language", "auto"),
+                                    )
                                     return _already_analyzed_response(d.name, extracted, ws_root)
                             # Found extracted but not yet analyzed — reuse metadata
                             paper_meta = {
@@ -175,67 +250,14 @@ class AnalyzePaperTool(Tool):
                 pdf_path, language, paper_meta=paper_meta, on_progress=_on_progress,
             )
             # Emit structured summary for frontend report rendering
-            if self._event_emitter:
-                try:
-                    ws_root = getattr(self._orchestrator, "workspace", None)
-                    paper_dir = Path(result["workspace_dir"]) if result.get("workspace_dir") else None
-                    if not paper_dir and ws_root:
-                        paper_dir = ws_root / "papers" / result["paper_id"]
-
-                    summary = {
-                        "paper_id": result["paper_id"],
-                        "title": result["title"],
-                        "language": result["language"],
-                        "page_count": 0,
-                        "formula_count": 0,
-                        "figure_count": 0,
-                        "has_translation": False,
-                        "scores": {},
-                        "audit_passed": True,
-                        "issue_count": 0,
-                        "key_findings": [],
-                        "artifacts": result.get("artifacts", []),
-                        "workspace_dir": result.get("workspace_dir", ""),
-                        "venue": "",
-                    }
-
-                    if paper_dir and paper_dir.exists():
-                        # Read extracted.json for counts
-                        ef = paper_dir / "extracted.json"
-                        if ef.exists():
-                            ed = json.loads(ef.read_text(encoding="utf-8"))
-                            summary["page_count"] = ed.get("page_count", 0)
-                            summary["formula_count"] = ed.get("formula_count", 0)
-                            summary["figure_count"] = len(ed.get("figures", []))
-                            summary["venue"] = ed.get("venue", "")
-
-                        # Read review_scores.json for scores
-                        rf = paper_dir / "review_scores.json"
-                        if rf.exists():
-                            rd = json.loads(rf.read_text(encoding="utf-8"))
-                            summary["scores"] = rd
-
-                        # Read audit_report.json for audit status
-                        af = paper_dir / "audit_report.json"
-                        if af.exists():
-                            ad = json.loads(af.read_text(encoding="utf-8"))
-                            summary["audit_passed"] = ad.get("passed", True)
-                            summary["issue_count"] = len(ad.get("issues", []))
-
-                        # Read analysis_summary.json for key_findings
-                        sf = paper_dir / "analysis_summary.json"
-                        if sf.exists():
-                            sd = json.loads(sf.read_text(encoding="utf-8"))
-                            summary["key_findings"] = sd.get("key_findings", [])
-                            summary["has_translation"] = sd.get("has_translation", False)
-
-                    await self._event_emitter(json.dumps({
-                        "type": "analysis_complete",
-                        "paper_id": result["paper_id"],
-                        "summary": summary,
-                    }, ensure_ascii=False))
-                except Exception:
-                    logger.exception("Failed to emit analysis_complete event")
+            await self._emit_analysis_complete(
+                result["paper_id"],
+                getattr(self._orchestrator, "workspace", None),
+                result_title=result["title"],
+                result_language=result["language"],
+                result_artifacts=result.get("artifacts", []),
+                result_workspace_dir=result.get("workspace_dir", ""),
+            )
 
             return json.dumps({
                 "paper_id": result["paper_id"],
