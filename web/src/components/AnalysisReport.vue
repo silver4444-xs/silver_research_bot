@@ -83,16 +83,16 @@ defineEmits(['export', 'askFollowUp'])
 const md = inject('markdown')
 
 // Card section patterns — ordered by appearance in report
+// Matches emoji headings AND Chinese numbered/descriptive headings
 const CARD_PATTERNS = [
-  { id: 'overview',     re: /📄\s*论文总览|论文总览/,         icon: '📄' },
-  { id: 'motivation',   re: /🧠\s*研究问题|研究问题与动机/,   icon: '🧠' },
-  { id: 'system_model', re: /🏗️\s*系统模型/,                  icon: '🏗️' },
-  { id: 'problem',      re: /🎯\s*问题形式化|问题形式/,       icon: '🎯' },
-  { id: 'algorithm',    re: /🔬\s*.*算法/,                    icon: '🔬' },
-  { id: 'experiment',   re: /📊\s*实验/,                      icon: '📊' },
-  { id: 'review',       re: /📋\s*.*审稿/,                    icon: '📋' },
-  { id: 'audit',        re: /🔍\s*.*审计|质量审计/,           icon: '🔍' },
-  { id: 'suggestions',  re: /💡\s*.*建议|📈\s*可视化|📋.*建议/, icon: '💡' },
+  { id: 'overview',     re: /📄\s*(?:论文总览|论文.*分析报告|论文基本信息)|论文总览|论文.*(?:分析报告|基本信息)/, icon: '📄' },
+  { id: 'motivation',   re: /🧠\s*研究问题|研究问题与动机|一[、.].*(?:研究|动机|核心问题)|核心问题与研究动机/, icon: '🧠' },
+  { id: 'system_model', re: /🏗️\s*系统模型|二[、.].*(?:系统|模型|架构)|系统模型(?:与|架构)/, icon: '🏗️' },
+  { id: 'algorithm',    re: /🔬\s*.*算法|三[、.].*算法|算法设计/, icon: '🔬' },
+  { id: 'experiment',   re: /📊\s*实验|四[、.].*实验|实验(?:结果|评估)/, icon: '📊' },
+  { id: 'review',       re: /📋\s*.*审稿|五[、.].*(?:审稿|维度|评价)|多维.*审稿|审稿评价/, icon: '📋' },
+  { id: 'suggestions',  re: /💡\s*.*建议|📈\s*可视化|📋.*建议|六[、.].*(?:贡献|总结|建议|改进|未来)|研究贡献|主要贡献/, icon: '💡' },
+  { id: 'audit',        re: /🔍\s*.*审计|质量审计|.*改进建议/, icon: '🔍' },
 ]
 
 const overallScore = computed(() => {
@@ -163,7 +163,7 @@ const parsedCards = computed(() => {
 
     cards.push({
       id: matched.id,
-      title: h.text.replace(/^[📄🧠🏗️🎯🔬📊📋🔍💡📈]\s*/, '').trim(),
+      title: h.text.replace(/^[📄🧠🏗️🎯🔬📊📋🔍💡📈]\s*/, '').replace(/^[一二三四五六七八九十]+[、.，]\s*/, '').trim(),
       icon: matched.icon,
       preview,
       html: md.renderFormula(sectionText),
