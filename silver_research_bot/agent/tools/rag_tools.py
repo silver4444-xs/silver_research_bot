@@ -230,3 +230,271 @@ class UnifiedRAG:
             "relations": relations,
             "related_papers": related_papers,
         }
+
+# ═══════════════════════════════════════════════════════════════
+# Agent Tools
+# ═══════════════════════════════════════════════════════════════
+
+@tool_parameters(tool_parameters_schema(
+    query=StringSchema("搜索查询（关键词、研究问题或论文标题）"),
+    top_k=IntegerSchema(5, description="返回结果数量 (1-10)", minimum=1, maximum=10),
+    modality=StringSchema("内容模态过滤: text, formula, figure, table, 或留空表示全部"),
+    tag=StringSchema("按标签过滤（如 transformer, diffusion），留空表示不过滤"),
+    fallback=BooleanSchema(description="内部库不足时是否自动回退到外部学术搜索", default=True),
+    required=["query"],
+))
+class RagSearchTool(Tool):
+    """统一检索内部知识库（文献库 + 论文分析产物），不足时自动回退到外部学术搜索。"""
+
+    def __init__(self, unified: UnifiedRAG | None = None,
+                 paper_search_tool: Any | None = None,
+                 web_search_tool: Any | None = None) -> None:
+        self._unified = unified
+        self._paper_search = paper_search_tool
+        self._web_search = web_search_tool
+
+    @property
+    def name(self) -> str:
+        return "rag_search"
+
+    @property
+    def description(self) -> str:
+        return (
+            "搜索内部知识库（已入库文献 + 已分析论文产物）。"
+            "内部结果不足时自动回退到 arXiv/Semantic Scholar/PubMed/DBLP 外部学术搜索。"
+            "使用 modality 参数可按内容类型（text/formula/figure/table）过滤。"
+        )
+
+    @property
+    def read_only(self) -> bool:
+        return True
+
+    async def execute(self, query: str, top_k: int = 5,
+                      modality: str = "", tag: str = "",
+                      fallback: bool = True, **kwargs: Any) -> str:
+        if not self._unified:
+            return "Error: RAG unified search not configured"
+
+        mod = modality.strip() if modality else None
+        t = tag.strip() if tag else None
+        results = await self._unified.search(query, top_k=top_k, modality=mod, tag=t)
+
+        # Quality check for fallback
+        top_score = results[0]["score"] if results else 0.0
+        needs_fallback = fallback and (
+            len(results) < (self._unified._fallback_count if self._unified else 3)
+            or top_score < (self._unified._fallback_score if self._unified else 0.5)
+        )
+
+        parts: list[str] = []
+
+        if results:
+            parts.append(f"## 内部知识库 ({len(results)} 条)")
+            for i, r in enumerate(results, 1):
+                src = {"literature": "文献库", "analysis": "分析产物"}.get(
+                    r.get("source", ""), r.get("source", ""))
+                parts.append(
+                    f"{i}. **{r.get('title', 'Untitled')}** [{src}] "
+                    f"score={r.get('score', 0):.3f}\n"
+                    f"   paper_id: `{r.get('paper_id', '')}`\n"
+                    f"   {r.get('text', '')[:300]}"
+                )
+        else:
+            parts.append("## 内部知识库\n未找到相关内容。")
+
+        if needs_fallback:
+            parts.append("\n## 外部搜索 (内部库覆盖不足，自动扩展)")
+            ext_parts: list[str] = []
+
+            if self._paper_search:
+                try:
+                    ext_res = await self._paper_search.execute(query=query, source="all", max_results=top_k)
+                    ext_parts.append(f"### 学术搜索\n{ext_res}")
+                except Exception:
+                    ext_parts.append("### 学术搜索\n搜索失败")
+
+            if self._web_search:
+                try:
+                    web_res = await self._web_search.execute(query=query, max_results=min(top_k, 3))
+                    ext_parts.append(f"### Web 搜索\n{web_res}")
+                except Exception:
+                    ext_parts.append("### Web 搜索\n搜索失败")
+
+            if ext_parts:
+                parts.extend(ext_parts)
+            else:
+                parts.append("(外部搜索工具未配置)")
+
+        return "\n\n".join(parts)
+
+
+@tool_parameters(tool_parameters_schema(
+    question=StringSchema("学术问题（基于知识库内容回答）"),
+    top_k=IntegerSchema(5, description="检索结果数量 (1-10)", minimum=1, maximum=10),
+    required=["question"],
+))
+class RagAskTool(Tool):
+    """基于内部知识库检索结果，用 LLM 合成带引用来源的学术回答。"""
+
+    def __init__(self, unified: UnifiedRAG | None = None,
+                 provider: "LLMProvider | None" = None) -> None:
+        self._unified = unified
+        self._provider = provider
+
+    @property
+    def name(self) -> str:
+        return "rag_ask"
+
+    @property
+    def description(self) -> str:
+        return (
+            "基于内部知识库（已入库文献 + 论文分析产物）回答学术问题。"
+            "自动检索相关内容，用 LLM 合成答案，标注引用来源 (paper_id + chunk_id)。"
+            "适合需要综合多篇文献信息的复杂问题。"
+        )
+
+    @property
+    def read_only(self) -> bool:
+        return True
+
+    async def execute(self, question: str, top_k: int = 5, **kwargs: Any) -> str:
+        if not self._unified:
+            return "Error: RAG unified search not configured"
+
+        answer_data = await self._unified.ask(question, top_k=top_k, provider=self._provider)
+
+        parts = [f"## 回答\n{answer_data['answer']}"]
+
+        sources = answer_data.get("sources", [])
+        if sources:
+            parts.append("\n## 引用来源")
+            for i, s in enumerate(sources, 1):
+                parts.append(
+                    f"{i}. **{s.get('title', 'Unknown')}** "
+                    f"(`{s.get('paper_id', '')}` / `{s.get('chunk_id', '')}`)"
+                )
+
+        return "\n\n".join(parts)
+
+
+@tool_parameters(tool_parameters_schema(
+    title=StringSchema("论文标题"),
+    abstract=StringSchema("论文摘要 (可为空)"),
+    content=StringSchema("论文正文内容或 URL（若为 URL 请先 web_fetch 获取内容）"),
+    authors=StringSchema("作者列表，逗号分隔 (如 'Hinton, LeCun, Bengio')"),
+    tags=StringSchema("标签，逗号分隔 (如 'transformer, attention, NLP')"),
+    required=["title", "content"],
+))
+class RagIngestTool(Tool):
+    """将文献入库到 RAG 知识库，自动建立 BM25 + 向量 + 多模态索引。"""
+
+    def __init__(self, unified: UnifiedRAG | None = None) -> None:
+        self._unified = unified
+
+    @property
+    def name(self) -> str:
+        return "rag_ingest"
+
+    @property
+    def description(self) -> str:
+        return (
+            "将一篇论文或文献入库到 RAG 知识库，自动索引 (BM25 + 向量 + 多模态)。"
+            "入库后可通过 rag_search 检索。如果 content 是 URL，请先用 web_fetch 获取全文。"
+        )
+
+    @property
+    def read_only(self) -> bool:
+        return False
+
+    async def execute(self, title: str, content: str, abstract: str = "",
+                      authors: str = "", tags: str = "", **kwargs: Any) -> str:
+        if not self._unified or not self._unified._rag:
+            return "Error: ResearchRAG not configured"
+
+        author_list = [a.strip() for a in authors.split(",") if a.strip()] if authors else []
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+        # Auto-tag from content if enabled
+        config = self._unified._config
+        if config and config.ingest_auto_tag and not tag_list:
+            found = _TECH_KEYWORD_RE.findall(content)
+            tag_list = list(dict.fromkeys(t.lower() for t in found))[:10]
+
+        try:
+            result = await self._unified._rag.add_paper(
+                title=title,
+                abstract=abstract,
+                content=content,
+                authors=author_list,
+                tags=tag_list,
+            )
+            return json.dumps({
+                "status": "ingested",
+                "paper_id": result.get("paper_id", ""),
+                "title": title,
+                "chunk_count": result.get("chunk_count", 0),
+                "tags": tag_list,
+                "message": f"已入库: {title} ({result.get('chunk_count', 0)} chunks, tags: {', '.join(tag_list) or 'none'})",
+            }, ensure_ascii=False, indent=2)
+        except Exception as e:
+            return f"入库失败: {e}"
+
+
+@tool_parameters(tool_parameters_schema(
+    query=StringSchema("检索查询（用于查找相关文献和已分析论文）"),
+    paper_ids=StringSchema("要对比的已分析论文 ID 列表（逗号分隔），留空则基于检索结果自动发现"),
+    required=["query"],
+))
+class RagCompareTool(Tool):
+    """对比检索结果与已分析论文之间的关联。"""
+
+    def __init__(self, unified: UnifiedRAG | None = None) -> None:
+        self._unified = unified
+
+    @property
+    def name(self) -> str:
+        return "rag_compare"
+
+    @property
+    def description(self) -> str:
+        return (
+            "发现检索结果与已分析论文之间的关联关系（引用、方法相似、扩展）。"
+            "输入一个研究主题，返回哪些已入库文献和已分析论文相关，以及它们之间的关系。"
+        )
+
+    @property
+    def read_only(self) -> bool:
+        return True
+
+    async def execute(self, query: str, paper_ids: str = "", **kwargs: Any) -> str:
+        if not self._unified:
+            return "Error: RAG unified search not configured"
+
+        pids = [p.strip() for p in paper_ids.split(",") if p.strip()] if paper_ids else None
+        comparison = await self._unified.compare(query, paper_ids=pids)
+
+        parts: list[str] = []
+
+        matches = comparison.get("matches", [])
+        if matches:
+            parts.append("## 检索匹配")
+            for i, m in enumerate(matches, 1):
+                parts.append(f"{i}. **{m.get('title', '?')}** (score: {m.get('score', 0):.3f})")
+
+        relations = comparison.get("relations", [])
+        if relations:
+            parts.append("\n## 论文关系")
+            shown: set[tuple[str, str]] = set()
+            for rel in relations:
+                pair = tuple(sorted([rel["from"], rel["to"]]))
+                if pair in shown:
+                    continue
+                shown.add(pair)
+                rtype = rel.get("type", "unknown")
+                label = {"cites": "引用", "similar_method": "方法相似", "extends": "扩展"}.get(rtype, rtype)
+                parts.append(f"- `{rel['from']}` → {label} → `{rel['to']}`")
+
+        if not matches and not relations:
+            parts.append("未找到相关匹配或关系。")
+
+        return "\n".join(parts)
