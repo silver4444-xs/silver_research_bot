@@ -7,7 +7,6 @@ AI Agent核心循环（AgentLoop），
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import json
 import os
 import time
@@ -21,6 +20,12 @@ from silver_research_bot.agent.autocompact import AutoCompact
 from silver_research_bot.agent.context import ContextBuilder
 from silver_research_bot.agent.hook import AgentHook, AgentHookContext, CompositeHook
 from silver_research_bot.agent.memory import Consolidator, Dream
+from silver_research_bot.agent.memory_conflict import MemoryConflictDetector
+from silver_research_bot.agent.memory_forgetting import ForgettingCurve
+from silver_research_bot.agent.memory_keeper import (
+    MemoryKeeper, expand_global_decisions, parse_conflict_decisions,
+)
+from silver_research_bot.agent.memory_scorer import MemoryScorer
 from silver_research_bot.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunner, AgentRunSpec
 from silver_research_bot.agent.skills import BUILTIN_SKILLS_DIR
 from silver_research_bot.agent.subagent import SubagentManager
@@ -33,6 +38,7 @@ from silver_research_bot.agent.tools.search import GlobTool, GrepTool
 from silver_research_bot.agent.tools.shell import ExecTool
 from silver_research_bot.agent.tools.self import MyTool
 from silver_research_bot.agent.tools.spawn import SpawnTool
+from silver_research_bot.agent.tools.team import TeamTool
 from silver_research_bot.agent.tools.web import WebFetchTool, WebSearchTool
 from silver_research_bot.agent.tools.paper_search import PaperSearchTool
 from silver_research_bot.bus.events import InboundMessage, OutboundMessage
@@ -62,6 +68,7 @@ class _LoopHook(AgentHook):
             on_progress: Callable[..., Awaitable[None]] | None = None,
             on_stream: Callable[[str], Awaitable[None]] | None = None,
             on_stream_end: Callable[..., Awaitable[None]] | None = None,
+            on_event: Callable[[str], Awaitable[None]] | None = None,
             *,
             channel: str = "cli",
             chat_id: str = "direct",
@@ -72,6 +79,7 @@ class _LoopHook(AgentHook):
         self._on_progress = on_progress
         self._on_stream = on_stream
         self._on_stream_end = on_stream_end
+        self._on_event = on_event
         self._channel = channel
         self._chat_id = chat_id
         self._message_id = message_id
@@ -94,6 +102,32 @@ class _LoopHook(AgentHook):
         if self._on_stream_end:
             await self._on_stream_end(resuming=resuming)
         self._stream_buf = ""
+
+    async def _emit_event(self, payload: dict) -> None:
+        if self._on_event:
+            import json as _json
+            await self._on_event(_json.dumps(payload, ensure_ascii=False))
+
+    async def on_tool_start(self, context: AgentHookContext, tool_name: str, args_summary: str) -> None:
+        await self._emit_event({"type": "tool_start", "name": tool_name, "args": args_summary})
+
+    async def on_tool_end(
+        self, context: AgentHookContext,
+        tool_name: str, ok: bool, summary: str, duration_ms: float,
+    ) -> None:
+        await self._emit_event({
+            "type": "tool_end", "name": tool_name,
+            "ok": ok, "summary": summary, "duration_ms": int(duration_ms),
+        })
+
+    async def on_governance(self, context: AgentHookContext, detail: str) -> None:
+        await self._emit_event({"type": "governance", "detail": detail})
+
+    async def on_injection(self, context: AgentHookContext, count: int) -> None:
+        await self._emit_event({"type": "injection", "count": count})
+
+    async def on_error(self, context: AgentHookContext, detail: str) -> None:
+        await self._emit_event({"type": "error", "detail": detail[:200]})
 
     async def before_iteration(self, context: AgentHookContext) -> None:
         self._loop._current_iteration = context.iteration
@@ -167,6 +201,9 @@ class AgentLoop:
             unified_session: bool = False,
             disabled_skills: list[str] | None = None,
             tools_config: ToolsConfig | None = None,
+            paper_manager: Any | None = None,
+            paper_orchestrator: Any | None = None,
+            paper_memory_mode: bool = False,
     ):
         from silver_research_bot.config.schema import ExecToolConfig, ToolsConfig, WebToolsConfig
 
@@ -216,6 +253,8 @@ class AgentLoop:
 
         self.restrict_to_workspace = restrict_to_workspace
         '是否限制文件操作在 workspace 内'
+        self._paper_manager = paper_manager
+        self._paper_orchestrator = paper_orchestrator
         self._unified_session = unified_session
         '是否将所有会话合并到同一个key（测试/演示用）'
 
@@ -274,16 +313,62 @@ class AgentLoop:
             session_ttl_minutes=session_ttl_minutes,
         )
         '检查空闲会话是否过期并清理'
-        self.dream = Dream(
-            store=self.context.memory,
-            provider=provider,
-            model=self.model,
+        self.paper_memory_mode = paper_memory_mode
+
+        # MemoryScorer + ConflictDetector — always created (no longer orphaned)
+        self.memory_scorer = MemoryScorer(provider=provider, model=self.model)
+        'LLM 重要性评分引擎'
+        self.memory_conflict = MemoryConflictDetector(
+            provider=provider, model=self.model,
+            academic_mode=paper_memory_mode,
         )
-        '背景记忆增强'
+        '语义冲突检测器（学术模式：矛盾结论保留双方）'
+
+        # MemoryKeeper / Dream — mutually exclusive based on mode
+        self.memory_keeper: MemoryKeeper | None = None
+        self.dream: Dream | None = None
+        self.research_tracker = None
+        self.active_memory_retriever = None
+
+        if paper_memory_mode:
+            # 论文模式: MemoryKeeper 替代 Dream
+            mem_cfg = getattr(tools_config, 'memory', None) if tools_config else None
+            forget_enabled = getattr(mem_cfg, 'forgetting_enabled', True) if mem_cfg else True
+            forget_halflife = getattr(mem_cfg, 'decay_halflife_days', 7.0) if mem_cfg else 7.0
+
+            self.memory_keeper = MemoryKeeper(
+                store=self.context.memory,
+                provider=provider,
+                model=self.model,
+                scorer=self.memory_scorer,
+                conflict_detector=self.memory_conflict,
+                bus=bus,
+                forgetting=ForgettingCurve(
+                    halflife_days=forget_halflife,
+                    enabled=forget_enabled,
+                ),
+            )
+            '轻量级记忆写入器（论文模式）'
+            from silver_research_bot.agent.research_context import ResearchContextTracker
+            from silver_research_bot.agent.memory_retrieval import ActiveMemoryRetriever
+            self.research_tracker = ResearchContextTracker(
+                persist_dir=self.context.memory.memory_dir,
+            )
+            self.active_memory_retriever = None  # 延迟创建：cli/commands.py 补全
+        else:
+            # 通用模式: Dream
+            self.dream = Dream(
+                store=self.context.memory,
+                provider=provider,
+                model=self.model,
+                enabled=True,
+            )
+            '背景记忆增强（通用模式）'
 
         # =========================6 并发与任务管理===============================
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
         ' 存储每个会话当前运行的asyncio任务，支持 /stop 取消'
+        self._web_tasks: dict[str, asyncio.Task] = {}  # session_key -> web SSE task
         self._background_tasks: list[asyncio.Task] = []
         '列表，存放需要在关闭时等待的后台任务（如异步压缩）'
         self._session_locks: dict[str, asyncio.Lock] = {}
@@ -360,8 +445,63 @@ class AgentLoop:
         pubmed_email = getattr(paper_cfg, "pubmed_email", "") if paper_cfg else ""
         ss_key = getattr(paper_cfg, "semantic_scholar_api_key", "") if paper_cfg else ""
         self.tools.register(PaperSearchTool(pubmed_email=pubmed_email, semantic_scholar_key=ss_key))
+        # RAG tools — unified search across literature + analysis artifacts
+        if self.paper_memory_mode and getattr(self.context, "paper_knowledge", None):
+            try:
+                from silver_research_bot.rag.research_rag import ResearchRAG as _ResearchRAG
+                from silver_research_bot.agent.tools.rag_tools import (
+                    RagSearchTool, RagAskTool, RagIngestTool, RagCompareTool, UnifiedRAG,
+                )
+                _rag_instance = _ResearchRAG(
+                    provider=self.provider,
+                    config=getattr(self._config, "rag", None),
+                )
+                _unified = UnifiedRAG(
+                    research_rag=_rag_instance,
+                    paper_knowledge=self.context.paper_knowledge,
+                    config=getattr(self._config, "rag_tools", None),
+                )
+                self.tools.register(RagSearchTool(
+                    unified=_unified,
+                    paper_search_tool=self.tools.get("paper_search"),
+                    web_search_tool=self.tools.get("web_search"),
+                ))
+                self.tools.register(RagAskTool(
+                    unified=_unified,
+                    provider=self.provider,
+                ))
+                self.tools.register(RagIngestTool(unified=_unified))
+                self.tools.register(RagCompareTool(unified=_unified))
+            except Exception:
+                logger.exception("Failed to register RAG tools")
+        # Paper analysis tools — wired only when manager/orchestrator are injected
+        if self._paper_orchestrator:
+            from silver_research_bot.paper_analyzer.tools import AnalyzePaperTool
+            self.tools.register(AnalyzePaperTool(orchestrator=self._paper_orchestrator))
+            # Register callback for incremental PaperKnowledgeIndex update
+            _loop_ref = self
+            self._paper_orchestrator._on_analysis_complete = (
+                lambda paper_id: asyncio.create_task(
+                    _loop_ref._on_paper_analysis_complete(paper_id)
+                )
+            )
+        if self._paper_manager:
+            from silver_research_bot.paper_analyzer.tools import (
+                ComparePapersTool, ListPapersTool, ReadPaperArtifactTool,
+            )
+            self.tools.register(ComparePapersTool(manager=self._paper_manager))
+            self.tools.register(ListPapersTool(manager=self._paper_manager))
+            self.tools.register(ReadPaperArtifactTool(manager=self._paper_manager))
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.tools.register(SpawnTool(manager=self.subagents))
+        # Team orchestrator — enables dynamic multi-agent DAG execution
+        from silver_research_bot.agent.blackboard import Blackboard
+        from silver_research_bot.agent.team import TeamOrchestrator
+        from silver_research_bot.agent.tools.blackboard import BlackboardTool
+        self._blackboard = Blackboard(self.workspace)
+        self._team_orchestrator = TeamOrchestrator(self.subagents, blackboard=self._blackboard)
+        self.tools.register(TeamTool(orchestrator=self._team_orchestrator))
+        self.tools.register(BlackboardTool(blackboard=self._blackboard))
         if self.cron_service:
             self.tools.register(
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
@@ -394,7 +534,7 @@ class AgentLoop:
         # 计算有效会话密钥（适用于统一会话）
         # 以便子代理的结果能路由到正确的待处理队列。
         effective_key = UNIFIED_SESSION_KEY if self._unified_session else f"{channel}:{chat_id}"
-        for name in ("message", "spawn", "cron", "my"):
+        for name in ("message", "spawn", "cron", "my", "orchestrate_team", "blackboard"):
             if tool := self.tools.get(name):
                 if hasattr(tool, "set_context"):
                     if name == "spawn":
@@ -448,6 +588,31 @@ class AgentLoop:
         sub_cancelled = await self.subagents.cancel_by_session(key)
         return cancelled + sub_cancelled
 
+    def register_web_task(self, key: str, task: asyncio.Task) -> None:
+        """注册一个 web 会话的 SSE 任务，使其可被 cancel_web_session 取消。"""
+        self._web_tasks[key] = task
+        task.add_done_callback(lambda t, k=key: self._web_tasks.pop(k, None))
+
+    async def cancel_web_session(self, key: str) -> int:
+        """取消指定 web 会话的活跃 SSE 任务，恢复检查点，清理子代理。"""
+        cancelled = 0
+        task = self._web_tasks.pop(key, None)
+        if task is not None and not task.done():
+            task.cancel()
+            cancelled = 1
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        # Restore partial checkpoint so progress isn't lost
+        session = self.sessions.get_or_create(key)
+        if self._restore_runtime_checkpoint(session):
+            self._clear_pending_user_turn(session)
+            self.sessions.save(session)
+            logger.info("Restored checkpoint for cancelled web session {}", key)
+        sub_cancelled = await self.subagents.cancel_by_session(key)
+        return cancelled + sub_cancelled
+
     def _effective_session_key(self, msg: InboundMessage) -> str:
         """根据 unified_session 配置和消息中的覆盖标记，计算实际用于路由和队列管理的会话键."""
         if self._unified_session and not msg.session_key_override:
@@ -460,6 +625,7 @@ class AgentLoop:
             on_progress: Callable[..., Awaitable[None]] | None = None,
             on_stream: Callable[[str], Awaitable[None]] | None = None,
             on_stream_end: Callable[..., Awaitable[None]] | None = None,
+            on_event: Callable[[str], Awaitable[None]] | None = None,
             on_retry_wait: Callable[[str], Awaitable[None]] | None = None,
             *,
             session: Session | None = None,
@@ -483,6 +649,7 @@ class AgentLoop:
             on_progress=on_progress,
             on_stream=on_stream,
             on_stream_end=on_stream_end,
+            on_event=on_event,
             channel=channel,
             chat_id=chat_id,
             message_id=message_id,
@@ -497,6 +664,16 @@ class AgentLoop:
             CompositeHook([loop_hook] + self._extra_hooks) if self._extra_hooks else loop_hook
         )
         '如果提供了额外的钩子（self._extra_hooks），则用 CompositeHook 将它们组合在一起，这样所有钩子的方法都会被依次调用'
+        # Wire SSE event emitter into long-running paper tools for progress streaming
+        if on_event:
+            for name in ("analyze_paper", "compare_papers", "orchestrate_team", "blackboard"):
+                tool = self.tools.get(name)
+                if tool is not None and hasattr(tool, "set_event_emitter"):
+                    tool.set_event_emitter(on_event)
+                    logger.info("SSE emitter wired for tool={} session={}", name, session.key if session else "none")
+                else:
+                    logger.warning("Cannot wire SSE emitter for {}: tool={} has_setter={}",
+                                   name, tool is not None, hasattr(tool, "set_event_emitter") if tool else "N/A")
 
         async def _checkpoint(payload: dict[str, Any]) -> None:
             """
@@ -610,9 +787,12 @@ class AgentLoop:
                 # 超时处理：调用 auto_compact.check_expired，它会找出空闲时间超过 session_ttl_minutes 的会话，并安排后台清理任务。
                 # 传入 active_session_keys（当前有挂起队列的会话 key），避免清理正在活跃的会话。
                 # _schedule_background 是一个辅助方法，用于启动后台异步任务并跟踪
+                # Protect active sessions from TTL expiry: sessions with pending
+                # queues AND sessions with active web SSE connections.
+                active_keys = set(self._pending_queues.keys()) | set(self._web_tasks.keys())
                 self.auto_compact.check_expired(
                     self._schedule_background,
-                    active_session_keys=self._pending_queues.keys(),
+                    active_session_keys=active_keys,
                 )
                 continue
             # '''3. 异常处理'''
@@ -676,17 +856,24 @@ class AgentLoop:
                 '''
                 pending_msg = msg
                 if effective_key != msg.session_key:
-                    pending_msg = dataclasses.replace(
-                        msg,
-                        session_key_override=effective_key,
-                    )
+                    pending_msg = msg.model_copy(update={"session_key_override": effective_key})
                 try:
                     self._pending_queues[effective_key].put_nowait(pending_msg)
                 except asyncio.QueueFull:
                     logger.warning(
-                        "Pending queue full for session {}, falling back to queued task",
+                        "Pending queue full for session {}, dropping message",
                         effective_key,
                     )
+                    # Do NOT fall through to create a second task — that would
+                    # overwrite _pending_queues[session_key] in _dispatch and
+                    # orphan the original queue, causing permanent message loss.
+                    # Instead, drop this message and let the user retry.
+                    await self.bus.publish_outbound(OutboundMessage(
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        content="⚠️ 当前处理中的消息过多，您的消息未能立即处理。请稍后重试。",
+                    ))
+                    continue
                 else:
                     logger.info(
                         "Routed follow-up message to pending queue for session {}",
@@ -721,7 +908,7 @@ class AgentLoop:
         '''
         session_key = self._effective_session_key(msg)
         if session_key != msg.session_key:
-            msg = dataclasses.replace(msg, session_key_override=session_key)
+            msg = msg.model_copy(update={"session_key_override": session_key})
 
         '''2.获取锁和并发闸门'''
         lock = self._session_locks.setdefault(session_key, asyncio.Lock())
@@ -815,14 +1002,28 @@ class AgentLoop:
                     logger.info("Task cancelled for session {}", session_key)
                     try:
                         key = self._effective_session_key(msg)
-                        session = self.sessions.get_or_create(key)
-                        if self._restore_runtime_checkpoint(session):
-                            self._clear_pending_user_turn(session)
-                            self.sessions.save(session)
-                            logger.info(
-                                "Restored partial context for cancelled session {}",
-                                key,
-                            )
+                        lock = self._session_locks.get(key)
+                        if lock and lock.locked():
+                            # Acquire the session lock to prevent races with the
+                            # running _process_message writing to the same session.
+                            async with lock:
+                                session = self.sessions.get_or_create(key)
+                                if self._restore_runtime_checkpoint(session):
+                                    self._clear_pending_user_turn(session)
+                                    self.sessions.save(session)
+                                    logger.info(
+                                        "Restored partial context for cancelled session {}",
+                                        key,
+                                    )
+                        else:
+                            session = self.sessions.get_or_create(key)
+                            if self._restore_runtime_checkpoint(session):
+                                self._clear_pending_user_turn(session)
+                                self.sessions.save(session)
+                                logger.info(
+                                    "Restored partial context for cancelled session {}",
+                                    key,
+                                )
                     except Exception:
                         logger.debug(
                             "Could not restore checkpoint for cancelled session {}",
@@ -883,6 +1084,33 @@ class AgentLoop:
         self._background_tasks.append(task)
         task.add_done_callback(self._background_tasks.remove)
 
+    async def _run_memory_keeper(self, channel: str, chat_id: str) -> None:
+        """后台运行 MemoryKeeper：提取事实 → 写入 MEMORY.md → 发送冲突提示。"""
+        if not self.memory_keeper:
+            return
+        try:
+            written, pending = await self.memory_keeper.process_new_consolidations()
+            if written:
+                logger.info("MemoryKeeper: {} new memories written", written)
+            if pending:
+                await self.memory_keeper.send_conflict_prompt()
+        except Exception:
+            logger.exception("MemoryKeeper: background processing failed")
+
+    async def _on_paper_analysis_complete(self, paper_id: str) -> None:
+        """论文分析完成回调：触发 PaperKnowledgeIndex 增量索引。"""
+        pk = getattr(self.context, "paper_knowledge", None)
+        if pk is None:
+            return
+        try:
+            added = await pk.add_paper(paper_id)
+            if added:
+                logger.info("PaperKnowledgeIndex: incremental index updated for {}", paper_id)
+        except Exception:
+            logger.exception(
+                "PaperKnowledgeIndex: failed to add paper {}", paper_id
+            )
+
     def stop(self) -> None:
         """停止 agent 循环"""
         self._running = False
@@ -895,6 +1123,7 @@ class AgentLoop:
             on_progress: Callable[[str], Awaitable[None]] | None = None,
             on_stream: Callable[[str], Awaitable[None]] | None = None,
             on_stream_end: Callable[..., Awaitable[None]] | None = None,
+            on_event: Callable[[str], Awaitable[None]] | None = None,
             pending_queue: asyncio.Queue | None = None,
     ) -> OutboundMessage | None:
         """处理单个入站消息并返回响应，包含了从会话加载、上下文构建、LLM 调用到响应返回的完整流程"""
@@ -952,6 +1181,18 @@ class AgentLoop:
             -获取完整历史（max_messages=0 表示不限条数）。
             -如果是子代理消息，current_message 为空（因为子代理的内容已包含在历史中），角色为 assistant；否则角色为 user。
             '''
+            # Paper knowledge: 在构建系统提示前检索相关论文分析结果
+            if self.paper_memory_mode:
+                query = msg.content if not is_subagent else ""
+                await self.context.prepare_paper_context(query)
+                # 研究上下文 + 活跃记忆
+                if self.research_tracker:
+                    self.context._research_context_block = \
+                        self.research_tracker.build_context_block(session)
+                if self.active_memory_retriever and query:
+                    entries = await self.active_memory_retriever.retrieve(query)
+                    self.context._active_memory_text = \
+                        self.active_memory_retriever.build_context_block(entries)
             messages = self.context.build_messages(
                 history=history,
                 current_message="" if is_subagent else msg.content,
@@ -990,7 +1231,7 @@ class AgentLoop:
         '''
         if msg.media:
             new_content, image_only = extract_documents(msg.content, msg.media)
-            msg = dataclasses.replace(msg, content=new_content, media=image_only)
+            msg = msg.model_copy(update={"content": new_content, "media": image_only})
 
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info("Processing message from {}:{}: {}", msg.channel, msg.sender_id, preview)
@@ -1006,12 +1247,48 @@ class AgentLoop:
             self.sessions.save(session)
         if self._restore_pending_user_turn(session):
             self.sessions.save(session)
+        # 跨会话恢复研究上下文
+        if self.research_tracker:
+            self.research_tracker.load_from_disk(session)
 
         '''
         2.3 自动压缩
         类似系统消息，根据空闲时间清理历史，返回待注入的摘要消息（pending）
         '''
         session, pending = self.auto_compact.prepare_session(session, key)
+
+        '''
+        2.3b 记忆冲突检查
+        检查是否有上一轮遗留的待决记忆冲突，解析用户决策并执行。
+        '''
+        if self.memory_keeper:
+            # Bump turn counts for pending conflicts
+            self.memory_keeper.bump_pending_turn_counts()
+
+            # Check for auto-expired conflicts
+            if self.memory_keeper.any_conflicts_expired():
+                resolved = self.memory_keeper.auto_resolve_expired()
+                if resolved:
+                    await self.bus.publish_outbound(OutboundMessage(
+                        channel=msg.channel, chat_id=msg.chat_id,
+                        content=(
+                            f"⏰ {len(resolved)} 条记忆冲突已超时自动处理"
+                            f"（{self.memory_keeper.conflict_timeout_turns}轮未决策，学术模式：都保留）。"
+                        ),
+                    ))
+
+            # Check if the user's message contains conflict decisions
+            if self.memory_keeper.has_pending_conflicts():
+                raw_decisions = parse_conflict_decisions(msg.content or "")
+                if raw_decisions:
+                    pending = self.memory_keeper._load_pending_conflicts()
+                    decisions = expand_global_decisions(raw_decisions, pending)
+                    resolved = await self.memory_keeper.resolve_conflicts(decisions)
+                    if resolved:
+                        await self.bus.publish_outbound(OutboundMessage(
+                            channel=msg.channel, chat_id=msg.chat_id,
+                            content=f"✅ 已处理 {len(decisions)} 条记忆冲突，写入 {resolved} 条记忆。",
+                        ))
 
         '''
         2.4 斜杠命令处理
@@ -1047,6 +1324,17 @@ class AgentLoop:
         获取完整历史。
         调用 ContextBuilder 组装系统提示、历史、运行时上下文、当前用户消息（包含媒体）等。
         '''
+        # Paper knowledge: 在构建系统提示前检索相关论文分析结果
+        if self.paper_memory_mode:
+            await self.context.prepare_paper_context(msg.content)
+            # 研究上下文 + 活跃记忆
+            if self.research_tracker:
+                self.context._research_context_block = \
+                    self.research_tracker.build_context_block(session)
+            if self.active_memory_retriever and msg.content:
+                entries = await self.active_memory_retriever.retrieve(msg.content)
+                self.context._active_memory_text = \
+                    self.active_memory_retriever.build_context_block(entries)
         history = session.get_history(max_messages=0)
 
         initial_messages = self.context.build_messages(
@@ -1111,18 +1399,84 @@ class AgentLoop:
 
         返回最终内容、所有消息、停止原因等
         '''
-        final_content, _, all_msgs, stop_reason, had_injections = await self._run_agent_loop(
-            initial_messages,
-            on_progress=on_progress or _bus_progress,
-            on_stream=on_stream,
-            on_stream_end=on_stream_end,
-            on_retry_wait=_on_retry_wait,
-            session=session,
-            channel=msg.channel,
-            chat_id=msg.chat_id,
+        from silver_research_bot.utils.langsmith_utils import trace_agent_turn
+
+        with trace_agent_turn(session_key=session_key, user_message=msg.content or "") as root_trace:
+            final_content, tools_used, all_msgs, stop_reason, had_injections = await self._run_agent_loop(
+                initial_messages,
+                on_progress=on_progress or _bus_progress,
+                on_stream=on_stream,
+                on_stream_end=on_stream_end,
+                on_event=on_event,
+                on_retry_wait=_on_retry_wait,
+                session=session,
+                channel=msg.channel,
+                chat_id=msg.chat_id,
             message_id=msg.metadata.get("message_id"),
             pending_queue=pending_queue,
         )
+            if root_trace is not None:
+                root_trace.outputs = {
+                    "final_content": (final_content or "")[:200],
+                    "stop_reason": stop_reason,
+                    "had_injections": had_injections,
+                    "tools_used": (tools_used or [])[:20],
+                }
+
+        '''
+        2.10b 关键路径工具 Code-Gate
+        检测论文上传标记，验证 analyze_paper 是否被调用。若用户上传了论文但 LLM
+        跳过了分析工具（直接编造答案），则注入纠正消息并重新处理。
+        '''
+        import re as _re
+        _PAPER_UPLOAD_RE = _re.compile(
+            r'\[已上传论文:.*?paper_id=(\S+?)(?:[,,\]]|$)'
+        )
+        paper_marker = _PAPER_UPLOAD_RE.search(msg.content or "")
+        already_retried = (
+            (msg.metadata or {}).get("_paper_gate_retry")
+            if msg.metadata else False
+        )
+        if (
+            paper_marker
+            and "analyze_paper" not in (tools_used or [])
+            and not already_retried
+        ):
+            logger.warning(
+                "Paper upload detected but analyze_paper not called — enforcing tool gate"
+            )
+            pid = paper_marker.group(1)
+            # Extract pdf_path from the marker if present
+            _path_m = _re.search(
+                r'pdf_path=(\S+?)(?:[,,\]]|$)', msg.content or ""
+            )
+            ppath = _path_m.group(1) if _path_m else "unknown"
+            correction = (
+                f"[系统提醒] 检测到论文(paper_id={pid})已上传但尚未完成分析。"
+                f"请先调用 analyze_paper(pdf_path=\"{ppath}\", paper_id=\"{pid}\") "
+                f"完成论文分析，然后再回答用户的问题。不要跳过分析步骤。"
+            )
+            fallback_msg = InboundMessage(
+                channel=msg.channel,
+                sender_id="user",
+                chat_id=msg.chat_id,
+                content=correction,
+                media=[],
+                metadata={
+                    **(msg.metadata or {}),
+                    "_paper_gate_retry": True,
+                    "message_id": msg.metadata.get("message_id") if msg.metadata else None,
+                },
+            )
+            return await self._process_message(
+                fallback_msg,
+                session_key=session_key,
+                on_progress=on_progress,
+                on_stream=on_stream,
+                on_stream_end=on_stream_end,
+                on_event=on_event,
+                pending_queue=pending_queue,
+            )
 
         '''
         2.11 确保最终内容非空
@@ -1142,8 +1496,30 @@ class AgentLoop:
         self._save_turn(session, all_msgs, save_skip)
         self._clear_pending_user_turn(session)
         self._clear_runtime_checkpoint(session)
+
+        # 更新研究上下文（记录本轮讨论的论文和发现）
+        if self.research_tracker:
+            assistant_text = ""
+            for m in reversed(all_msgs):
+                if m.get("role") == "assistant" and m.get("content"):
+                    assistant_text = m["content"]
+                    break
+            # 从 PaperKnowledgeIndex 结果中提取涉及的论文 ID
+            paper_ids = self._extract_paper_ids_from_context()
+            self.research_tracker.update(
+                session, msg.content,
+                assistant_response=assistant_text,
+                paper_ids=paper_ids,
+            )
+            # 持久化到磁盘（跨会话恢复）
+            self.research_tracker.save_to_disk(session)
+
         self.sessions.save(session)
         self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
+
+        # 触发 MemoryKeeper 后台处理（提取事实 + 检测冲突 + 写入 MEMORY.md）
+        if self.memory_keeper:
+            self._schedule_background(self._run_memory_keeper(msg.channel, msg.chat_id))
 
         '''
         2.13 MessageTool 的响应抑制
@@ -1229,6 +1605,18 @@ class AgentLoop:
             filtered.append(block)
 
         return filtered
+
+    def _extract_paper_ids_from_context(self) -> list[str]:
+        """从 PaperKnowledgeIndex 的当前搜索结果中提取涉及的论文 ID。"""
+        if not self.context._paper_context:
+            return []
+        import re as _re
+        # _paper_context 格式: "## Paper Knowledge\n### Title\n- [..."
+        ids: list[str] = []
+        # 匹配 paper_id 模式（通常是 UUID 或 p_xxx 格式）
+        for m in _re.finditer(r'`(p_[a-zA-Z0-9_-]+)`', self.context._paper_context):
+            ids.append(m.group(1))
+        return list(dict.fromkeys(ids))  # 去重保序
 
     def _save_turn(self, session: Session, messages: list[dict], skip: int) -> None:
         """
@@ -1470,6 +1858,7 @@ class AgentLoop:
             on_progress: Callable[[str], Awaitable[None]] | None = None,
             on_stream: Callable[[str], Awaitable[None]] | None = None,
             on_stream_end: Callable[..., Awaitable[None]] | None = None,
+            on_event: Callable[[str], Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """提供一个简化的 API，允许外部代码（如测试脚本、命令行工具、HTTP 服务）直接向 Agent 发送一条用户消息，
             并获得响应，而无需构建 InboundMessage 对象或启动完整的 run() 循环"""
@@ -1484,4 +1873,5 @@ class AgentLoop:
             on_progress=on_progress,
             on_stream=on_stream,
             on_stream_end=on_stream_end,
+            on_event=on_event,
         )
