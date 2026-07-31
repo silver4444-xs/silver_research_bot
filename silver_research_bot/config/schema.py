@@ -8,6 +8,7 @@
     5.环境变量友好：支持嵌套分隔符和大写前缀，方便在容器/K8s 环境中注入配置。
     6.扩展性：ChannelsConfig 等类允许 extra="allow"，通道插件可自定义额外字段；mcp_servers 动态支持任意数量的 MCP 服务器。
 """
+from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
@@ -88,6 +89,21 @@ class DreamConfig(Base):
 class MemoryConfig(Base):
     """Agent 记忆系统配置 — 重要性评分、分层管理、遗忘曲线、冲突检测、主动检索"""
 
+    # === 模式控制 ===
+    paper_memory_mode: bool = True
+    '论文研读模式：启用 PaperKnowledgeIndex，禁用 Dream/Forgetting/Conflict（适合论文研读场景）'
+    dream_enabled: bool = False
+    '是否启用 Dream 后台记忆整合 cron 任务（paper_memory_mode=True 时默认禁用）'
+    forgetting_enabled: bool = True
+    '是否启用 Ebbinghaus 遗忘曲线（自动清理衰减记忆，无额外 LLM 成本）'
+    conflict_academic_mode: bool = True
+    '学术冲突模式：矛盾结论提交用户决策，超时时保留双方'
+    conflict_timeout_turns: int = Field(default=3, ge=1, le=20)
+    '记忆冲突超时轮数：用户在此轮数内未决策则自动按学术模式处理'
+    embedding_cache_enabled: bool = True
+    '是否启用 embedding 磁盘缓存，减少重复 API 调用'
+
+    # === 传统记忆参数 ===
     short_term_window: int = Field(default=20, ge=5, le=200)
     '短期对话缓存轮数'
     importance_threshold: float = Field(default=3.0, ge=1.0, le=10.0)
@@ -111,7 +127,7 @@ class AgentDefaults(Base):
 
     workspace: str = "~/.silver_research_bot/workspace"
     '工作目录（支持 ~ 展开）'
-    model: str = "deepseek-chat"
+    model: str = "deepseek-v4-flash"
     '使用的 LLM 模型标识'
     provider: str = (
         "auto"  # Provider name (e.g. "anthropic", "openrouter") or "auto" for auto-detection
@@ -126,7 +142,7 @@ class AgentDefaults(Base):
     temperature: float = 0.1
     max_tool_iterations: int = 200
     'Agent 单次任务中最大工具调用轮次'
-    max_tool_result_chars: int = 16_000
+    max_tool_result_chars: int = 32_000
     '工具返回结果的最大字符数'
     provider_retry_mode: Literal["standard", "persistent"] = "standard"
     '重试模式：standard或persistent'
@@ -340,6 +356,23 @@ class RAGConfig(Base):
     '是否启用 LLM 重排序'
 
 
+class RAGToolConfig(Base):
+    """Agent RAG 工具配置 — 控制 Agent 调用 RAG 工具时的行为"""
+
+    fallback_score_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    '内部检索最高分低于此值触发外部回退 (0-1)'
+    fallback_count_threshold: int = Field(default=3, ge=0, le=20)
+    '内部检索结果数少于此值触发外部回退'
+    analysis_source_weight: float = Field(default=1.5, ge=1.0, le=5.0)
+    '分析产物 (PaperKnowledgeIndex) 相对文献库的权重倍数'
+    ask_model_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    'rag_ask LLM 生成温度'
+    ask_max_answer_chars: int = Field(default=2000, ge=100, le=8000)
+    'rag_ask 回答最大字符数'
+    ingest_auto_tag: bool = True
+    '入库时是否自动从内容中提取技术关键词为 tag'
+
+
 class Config(BaseSettings):
     """
         Root配置
@@ -354,6 +387,7 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     rag: RAGConfig = Field(default_factory=RAGConfig)
+    rag_tools: RAGToolConfig = Field(default_factory=RAGToolConfig)
     paper_search: PaperSearchConfig = Field(default_factory=PaperSearchConfig)
 
     @property
