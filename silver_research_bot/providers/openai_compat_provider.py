@@ -21,6 +21,9 @@ import json_repair
 from loguru import logger
 
 if os.environ.get("LANGFUSE_SECRET_KEY") and importlib.util.find_spec("langfuse"):
+    import logging
+    # Suppress langfuse background export noise (401, timeouts, etc.)
+    logging.getLogger("langfuse").setLevel(logging.WARNING)
     from langfuse.openai import AsyncOpenAI
 else:
     if os.environ.get("LANGFUSE_SECRET_KEY"):

@@ -2,11 +2,15 @@
 silver_research_bot - 一个轻量级 AI agent 框架
 """
 
+from __future__ import annotations
+
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from pathlib import Path
-import tomllib
 
-from silver_research_bot.research_app import app as research_fastapi_app
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
 
 
 def _read_pyproject_version() -> str | None:
@@ -29,6 +33,7 @@ def _resolve_version() -> str:
 __version__ = _resolve_version()
 __logo__ = "⚪"
 
+from silver_research_bot.research_app import app as research_fastapi_app
 from silver_research_bot.silver_research_bot import silver_research_bot, RunResult
 
 __all__ = ["silver_research_bot", "RunResult", "research_fastapi_app"]

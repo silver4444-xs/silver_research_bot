@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from collections import Counter
+from pydantic import BaseModel, ConfigDict, Field
 import inspect
 from pathlib import Path
 from typing import Any
@@ -56,12 +57,53 @@ _COMPACTABLE_TOOLS = frozenset({
 '一组工具名称，其输出结果在压缩时可以安全地丢弃或简化（例如只读工具）'
 _BACKFILL_CONTENT = "[Tool result unavailable — call was interrupted or lost]"
 '当某个工具调用因中断而丢失结果时，用作回填的错误提示消息内容'
+_SEQUENCE_WINDOW = 8
+'工具调用序列模式检测的滑动窗口大小（最近 N 轮）'
+_SEQUENCE_REPEAT_MAX = 6
+'滑动窗口中同一模式的最大重复次数，达到则判定为循环（窗口 8 轮中同一模式出现 ≥6 次 = 循环）'
+_TOOL_TYPE_LIMITS: dict[str, int] = {
+    "web_search": 20,
+    "web_fetch": 15,
+    "read_file": 50,
+    "exec": 30,
+    "grep": 30,
+    "glob": 20,
+    "spawn": 5,
+}
+'每种工具类型在单次 Agent 执行中的最大调用次数硬上限'
 
 
-@dataclass(slots=True)
-class AgentRunSpec:
+def _tool_call_signature(tc: Any) -> str:
+    """Build a content-aware signature for tool-loop detection.
+
+    Same tool on *different* targets (files, queries, URLs) produces different
+    signatures so codebase exploration is not falsely flagged as stuck loop.
+    Same tool on the *same* target → identical signature → real loop caught.
+    """
+    name = tc.name
+    args = tc.arguments or {}
+    if name in ('read_file', 'write_file', 'edit_file'):
+        return f"{name}:{args.get('file_path', args.get('path', ''))}"
+    elif name == 'grep':
+        return f"{name}:{args.get('pattern', '')}"
+    elif name in ('web_search', 'paper_search'):
+        return f"{name}:{args.get('query', '')}"
+    elif name == 'web_fetch':
+        return f"{name}:{args.get('url', '')}"
+    elif name == 'exec':
+        return f"{name}:{args.get('command', '')[:80]}"
+    elif name == 'glob':
+        return f"{name}:{args.get('pattern', '')}"
+    elif name == 'list_dir':
+        return f"{name}:{args.get('path', '')}"
+    else:
+        return name
+
+
+class AgentRunSpec(BaseModel):
     """Agent 单次执行的配置参数"""
 
+    model_config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
     initial_messages: list[dict[str, Any]]
     '发送给 LLM 的初始消息列表（已包含历史、系统提示等）'
     tools: ToolRegistry
@@ -77,7 +119,7 @@ class AgentRunSpec:
     max_tokens: int | None = None
     'LLM 生成的最大 token 数'
     reasoning_effort: str | None = None
-    '推理强度（某些模型支持，如 “low”/“high”）'
+    '推理强度（某些模型支持，如 "low"/"high"）'
     hook: AgentHook | None = None
     '钩子对象，用于监听事件（流式、进度等）'
     error_message: str | None = _DEFAULT_ERROR_MESSAGE
@@ -107,22 +149,22 @@ class AgentRunSpec:
     injection_callback: Any | None = None
     '中轮注入回调（从队列中取出新消息）'
 
-@dataclass(slots=True)
-class AgentRunResult:
+class AgentRunResult(BaseModel):
     """单次执行的输出结果"""
+    model_config = ConfigDict(extra='forbid')
     final_content: str | None
     '最终返回给用户的文本（可能为 None）'
     messages: list[dict[str, Any]]
     '本次执行产生的完整消息历史（包括中间轮次）'
-    tools_used: list[str] = field(default_factory=list)
+    tools_used: list[str] = Field(default_factory=list)
     '实际调用过的工具名称列表'
-    usage: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int] = Field(default_factory=dict)
     'LLM token 使用量（prompt/completion）'
     stop_reason: str = "completed"
     '停止原因（"completed", "max_iterations", "error", "empty_final_response"）'
     error: str | None = None
     '若发生错误，记录错误信息'
-    tool_events: list[dict[str, str]] = field(default_factory=list)
+    tool_events: list[dict[str, str]] = Field(default_factory=list)
     '工具调用事件（用于调试/日志）'
     had_injections: bool = False
     '本轮执行中是否发生过中轮注入'
@@ -185,6 +227,8 @@ class AgentRunner:
         *,
         phase: str = "after error",
         iteration: int | None = None,
+        hook: AgentHook | None = None,
+        error_context: str | None = None,
     ) -> tuple[bool, int]:
         """
         处理待处理的注入。返回 (should_continue, updated_cycles)。
@@ -212,6 +256,18 @@ class AgentRunner:
         if not injections:
             return False, injection_cycles
         injection_cycles += 1
+        # Preserve error context: when an error occurred and injections are pending,
+        # prepend an error placeholder so the LLM knows the previous operation failed
+        # before processing the new injected messages.
+        if error_context:
+            error_placeholder = {
+                "role": "user",
+                "content": (
+                    f"[System: previous operation ended with an unresolved error — "
+                    f"{error_context}]"
+                ),
+            }
+            injections = [error_placeholder] + injections
         if assistant_message is not None:
             messages.append(assistant_message)
             if iteration is not None:
@@ -231,6 +287,8 @@ class AgentRunner:
             "Injected {} follow-up message(s) {} ({}/{})",
             len(injections), phase, injection_cycles, _MAX_INJECTION_CYCLES,
         )
+        if hook is not None:
+            await hook.on_injection(AgentHookContext(iteration=iteration or 0, messages=messages), len(injections))
         return True, injection_cycles
 
     async def _drain_injections(self, spec: AgentRunSpec) -> list[dict[str, Any]]:
@@ -316,8 +374,13 @@ class AgentRunner:
         '本轮执行是否发生过中轮注入（用户中途插入消息）'
         injection_cycles = 0
         '中轮注入循环次数（防止无限循环）'
+        tool_sequence_window: list[tuple[str, ...]] = []
+        '工具调用序列滑动窗口（P0：检测循环模式）'
+        tool_call_counts: dict[str, int] = {}
+        '每种工具类型的累计调用次数（P1：硬上限限流）'
 
         for iteration in range(spec.max_iterations):
+            gov_msg_count_before = len(messages)
             try:
                 '''1. 上下文治理（Context Governance）在每次调用 LLM 之前，对当前消息列表进行一系列清理和优化：'''
                 # 移除没有对应 assistant 工具调用消息的 tool 结果
@@ -352,6 +415,14 @@ class AgentRunner:
             '''
             context = AgentHookContext(iteration=iteration, messages=messages)
             await hook.before_iteration(context)
+            if len(messages_for_model) != gov_msg_count_before:
+                from silver_research_bot.utils.langsmith_utils import trace_governance
+                await hook.on_governance(
+                    context,
+                    f"governance: {gov_msg_count_before} → {len(messages_for_model)} messages",
+                )
+                with trace_governance(gov_msg_count_before, len(messages_for_model)):
+                    pass
 
             '''3. 调用模型 返回 ModelResponse 对象，包含 content、tool_calls、finish_reason 等'''
             response = await self._request_model(spec, messages_for_model, hook, context)
@@ -391,12 +462,16 @@ class AgentRunner:
                 )
 
                 await hook.before_execute_tools(context)
+                for tc in response.tool_calls:
+                    args_str = str(tc.arguments)[:120]
+                    await hook.on_tool_start(context, tc.name, args_str)
 
                 # 4.5 执行工具
                 results, new_events, fatal_error = await self._execute_tools(
                     spec,
                     response.tool_calls,
                     external_lookup_counts,
+                    tool_call_counts,
                 )
                 tool_events.extend(new_events)
                 context.tool_results = list(results)
@@ -417,7 +492,33 @@ class AgentRunner:
                     }
                     messages.append(tool_message)
                     completed_tool_results.append(tool_message)
-                # 4.7 检查致命错误：如果某个工具执行失败且 fail_on_tool_error=True，会立即终止循环，生成错误消息。
+                for tc, result in zip(response.tool_calls, results):
+                    ok = not (isinstance(result, str) and result.startswith("Error:"))
+                    await hook.on_tool_end(context, tc.name, ok, str(result)[:200], 0)
+                # 4.7 工具调用序列模式检测（P0）：记录本轮工具调用模式，滑动窗口检测循环
+                turn_sig = tuple(sorted(_tool_call_signature(tc) for tc in response.tool_calls))
+                tool_sequence_window.append(turn_sig)
+                if len(tool_sequence_window) > _SEQUENCE_WINDOW:
+                    tool_sequence_window.pop(0)
+                if len(tool_sequence_window) == _SEQUENCE_WINDOW:
+                    counts = Counter(tool_sequence_window)
+                    top_mode, top_count = counts.most_common(1)[0]
+                    if top_count >= _SEQUENCE_REPEAT_MAX:
+                        logger.warning(
+                            "Tool loop detected: '{}' repeated {}/{} turns (window: {})",
+                            top_mode, top_count, _SEQUENCE_WINDOW, tool_sequence_window,
+                        )
+                        stop_reason = "tool_loop_detected"
+                        final_content = (
+                            "I've been calling the same tools repeatedly without making progress. "
+                            "Let me summarize what I've found so far instead."
+                        )
+                        self._append_final_message(messages, final_content)
+                        context.final_content = final_content
+                        context.stop_reason = stop_reason
+                        await hook.after_iteration(context)
+                        break
+                # 4.8 检查致命错误：如果某个工具执行失败且 fail_on_tool_error=True，会立即终止循环，生成错误消息。
                 if fatal_error is not None:
                     error = f"Error: {type(fatal_error).__name__}: {fatal_error}"
                     final_content = error
@@ -430,6 +531,7 @@ class AgentRunner:
                     should_continue, injection_cycles = await self._try_drain_injections(
                         spec, messages, None, injection_cycles,
                         phase="after tool error",
+                        error_context=f"Tool error: {error}",
                     )
                     if should_continue:
                         had_injections = True
@@ -471,8 +573,9 @@ class AgentRunner:
             '''5. 处理无工具调用的情况'''
             clean = hook.finalize_content(context, response.content)
             # 5.1 处理空内容重试：如果响应内容为空（经钩子过滤后），但 finish_reason != "error"，
-            # 则尝试调用 _request_finalization_retry（一种更简单的 prompt）来获取最终回复，最多 _MAX_EMPTY_RETRIES 次
-            if response.finish_reason != "error" and is_blank_text(clean):
+            # 则尝试调用 _request_finalization_retry（一种更简单的 prompt）来获取最终回复，最多 _MAX_EMPTY_RETRIES 次。
+            # 但如果本轮已经调用过工具，说明 LLM 正在执行多步工具链，不应打断（retry 会禁用 tools）。
+            if response.finish_reason != "error" and is_blank_text(clean) and not tools_used:
                 empty_content_retries += 1
                 if empty_content_retries < _MAX_EMPTY_RETRIES:
                     logger.warning(
@@ -504,7 +607,7 @@ class AgentRunner:
                 clean = hook.finalize_content(context, response.content)
 
             # 5.2 处理长度截断：如果 finish_reason == "length" 且内容非空，说明输出被截断。
-            # 此时追加一条“继续”消息（build_length_recovery_message），让 LLM 可以继续输出，最多 _MAX_LENGTH_RECOVERIES 次。
+            # 此时追加一条"继续"消息（build_length_recovery_message），让 LLM 可以继续输出，最多 _MAX_LENGTH_RECOVERIES 次。
             if response.finish_reason == "length" and not is_blank_text(clean):
                 length_recovery_count += 1
                 if length_recovery_count <= _MAX_LENGTH_RECOVERIES:
@@ -561,6 +664,7 @@ class AgentRunner:
                 final_content = clean or spec.error_message or _DEFAULT_ERROR_MESSAGE
                 stop_reason = "error"
                 error = final_content
+                await hook.on_error(context, error[:200])
                 self._append_model_error_placeholder(messages)
                 context.final_content = final_content
                 context.error = error
@@ -569,6 +673,7 @@ class AgentRunner:
                 should_continue, injection_cycles = await self._try_drain_injections(
                     spec, messages, None, injection_cycles,
                     phase="after LLM error",
+                    error_context=f"LLM error: {error[:200]}",
                 )
                 if should_continue:
                     had_injections = True
@@ -586,6 +691,7 @@ class AgentRunner:
                 should_continue, injection_cycles = await self._try_drain_injections(
                     spec, messages, None, injection_cycles,
                     phase="after empty response",
+                    error_context="LLM returned empty response",
                 )
                 if should_continue:
                     had_injections = True
@@ -745,6 +851,7 @@ class AgentRunner:
         spec: AgentRunSpec,
         tool_calls: list[ToolCallRequest],
         external_lookup_counts: dict[str, int],
+        tool_call_counts: dict[str, int],
     ) -> tuple[list[Any], list[dict[str, str]], BaseException | None]:
         """
         执行一批工具调用，支持依赖分批和并发控制
@@ -768,12 +875,12 @@ class AgentRunner:
         for batch in batches:
             if spec.concurrent_tools and len(batch) > 1:
                 tool_results.extend(await asyncio.gather(*(
-                    self._run_tool(spec, tool_call, external_lookup_counts)
+                    self._run_tool(spec, tool_call, external_lookup_counts, tool_call_counts)
                     for tool_call in batch
                 )))
             else:
                 for tool_call in batch:
-                    tool_results.append(await self._run_tool(spec, tool_call, external_lookup_counts))
+                    tool_results.append(await self._run_tool(spec, tool_call, external_lookup_counts, tool_call_counts))
 
         results: list[Any] = []
         events: list[dict[str, str]] = []
@@ -790,6 +897,7 @@ class AgentRunner:
         spec: AgentRunSpec,
         tool_call: ToolCallRequest,
         external_lookup_counts: dict[str, int],
+        tool_call_counts: dict[str, int],
     ) -> tuple[Any, dict[str, str], BaseException | None]:
         """执行单个工具调用并处理结果的核心方法。它负责准备参数、调用工具、捕获异常、返回标准化结果以及生成事件日志"""
 
@@ -814,6 +922,33 @@ class AgentRunner:
             if spec.fail_on_tool_error:
                 return lookup_error + _HINT, event, RuntimeError(lookup_error)
             return lookup_error + _HINT, event, None
+
+        '''
+        1b. 工具类型硬上限检查（P1）
+        每种工具类型有独立的最大调用次数，防止 LLM 陷入对单一工具的无限循环调用。
+        无论参数如何变化，只要同一种工具被调用超过上限即阻止。
+        '''
+        limit = _TOOL_TYPE_LIMITS.get(tool_call.name)
+        if limit is not None:
+            count = tool_call_counts.get(tool_call.name, 0) + 1
+            tool_call_counts[tool_call.name] = count
+            if count > limit:
+                logger.warning(
+                    "Tool type limit exceeded: {} called {} times (limit: {})",
+                    tool_call.name, count, limit,
+                )
+                event = {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": f"tool type limit ({limit}) exceeded",
+                }
+                msg = (
+                    f"Error: {tool_call.name} call limit ({limit}) exceeded. "
+                    "Use results already obtained or try a different approach."
+                )
+                if spec.fail_on_tool_error:
+                    return msg + _HINT, event, RuntimeError(msg)
+                return msg + _HINT, event, None
 
         '''
         2. 准备工具调用（prepare_call 钩子）
@@ -843,52 +978,57 @@ class AgentRunner:
                 "detail": prep_error.split(": ", 1)[-1][:120],
             }
             return prep_error + _HINT, event, RuntimeError(prep_error) if spec.fail_on_tool_error else None
-        '''
-        4. 执行工具
-        优先使用 prepare_call 返回的具体工具对象；否则通过 spec.tools.execute 查找并执行。
-        捕获 CancelledError 并重新抛出，确保外部取消能够正确传播。
-        捕获其他所有异常（BaseException），统一处理。
-        '''
-        try:
-            if tool is not None:
-                result = await tool.execute(**params)
-            else:
-                result = await spec.tools.execute(tool_call.name, params)
-        except asyncio.CancelledError:
-            raise
-        except BaseException as exc:
-            event = {
-                "name": tool_call.name,
-                "status": "error",
-                "detail": str(exc),
-            }
-            if spec.fail_on_tool_error:
-                return f"Error: {type(exc).__name__}: {exc}", event, exc
-            return f"Error: {type(exc).__name__}: {exc}", event, None
+        from silver_research_bot.utils.langsmith_utils import trace_tool_call
 
-        '''
-        5. 检查工具返回的假“Error”字符串
-        某些工具可能以字符串 "Error: xxx" 的形式返回错误（而不是抛出异常）。
-        这里将其视为非致命（除非 fail_on_tool_error=True），并同样生成事件和追加提示
-        '''
-        if isinstance(result, str) and result.startswith("Error"):
-            event = {
-                "name": tool_call.name,
-                "status": "error",
-                "detail": result.replace("\n", " ").strip()[:120],
-            }
-            if spec.fail_on_tool_error:
-                return result + _HINT, event, RuntimeError(result)
-            return result + _HINT, event, None
+        with trace_tool_call(tool_call.name, str(params)[:200]) as tool_span:
+            try:
+                if tool is not None:
+                    result = await tool.execute(**params)
+                else:
+                    result = await spec.tools.execute(tool_call.name, params)
+            except asyncio.CancelledError:
+                if tool_span is not None:
+                    tool_span.outputs = {"ok": False, "error": "cancelled"}
+                raise
+            except BaseException as exc:
+                if tool_span is not None:
+                    tool_span.outputs = {"ok": False, "error": str(exc)[:200]}
+                event = {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": str(exc),
+                }
+                _guidance = "\n\n[这个工具调用失败了。请基于已有信息继续，或尝试其他方法。]"
+                if spec.fail_on_tool_error:
+                    return f"[TOOL_ERROR] {type(exc).__name__}: {exc}{_guidance}", event, exc
+                return f"[TOOL_ERROR] {type(exc).__name__}: {exc}{_guidance}", event, None
 
-        '''6. 成功执行：生成成功事件'''
-        detail = "" if result is None else str(result)
-        detail = detail.replace("\n", " ").strip()
-        if not detail:
-            detail = "(empty)"
-        elif len(detail) > 120:
-            detail = detail[:120] + "..."
-        return result, {"name": tool_call.name, "status": "ok", "detail": detail}, None
+            if isinstance(result, str) and result.startswith("Error"):
+                if tool_span is not None:
+                    tool_span.outputs = {"ok": False, "error": result[:200]}
+                event = {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": result.replace("\n", " ").strip()[:120],
+                }
+                _tool_error_result = (
+                    f"[TOOL_ERROR] {result}"
+                    if not result.startswith("[TOOL_ERROR]")
+                    else result
+                )
+                if spec.fail_on_tool_error:
+                    return _tool_error_result + _HINT, event, RuntimeError(result)
+                return _tool_error_result + _HINT, event, None
+
+            if tool_span is not None:
+                tool_span.outputs = {"ok": True, "summary": str(result)[:200]}
+            detail = "" if result is None else str(result)
+            detail = detail.replace("\n", " ").strip()
+            if not detail:
+                detail = "(empty)"
+            elif len(detail) > 120:
+                detail = detail[:120] + "..."
+            return result, {"name": tool_call.name, "status": "ok", "detail": detail}, None
 
     async def _emit_checkpoint(
         self,
@@ -956,7 +1096,7 @@ class AgentRunner:
     def _drop_orphan_tool_results(
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """移除那些没有对应 assistant 工具调用（tool_calls）的 tool 结果消息（即“孤儿”结果）"""
+        """移除那些没有对应 assistant 工具调用（tool_calls）的 tool 结果消息（即"孤儿"结果）"""
         declared: set[str] = set()
         updated: list[dict[str, Any]] | None = None
         for idx, msg in enumerate(messages):

@@ -1,11 +1,13 @@
+from __future__ import annotations
 """文件系统工具：读、写、编辑、列出目录"""
 
 import difflib
 import mimetypes
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from silver_research_bot.agent.tools.base import Tool, tool_parameters
 from silver_research_bot.agent.tools.schema import BooleanSchema, IntegerSchema, StringSchema, tool_parameters_schema
@@ -526,8 +528,8 @@ def _reindent_like_match(old_text: str, actual_text: str, new_text: str) -> str:
     return "\n".join((delta + line) if line else line for line in new_text.split("\n"))
 
 
-@dataclass(slots=True)
-class _MatchSpan:
+class _MatchSpan(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     start: int
     '在内容中的起始字符索引'
     end: int

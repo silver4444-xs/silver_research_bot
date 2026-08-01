@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Shell 执行工具."""
 
 import asyncio

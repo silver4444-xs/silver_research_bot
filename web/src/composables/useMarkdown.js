@@ -4,8 +4,8 @@ let _mjRetries = 0
 
 export function useMarkdown(upText) {
 	function retypeset(){if(window.MathJax&&window.MathJax.typesetPromise){try{MathJax.typesetClear();MathJax.typesetPromise()}catch(e){console.error('MathJax typeset error:',e)}_mjRetries=0}
-	else if(_mjRetries<30){_mjRetries++;setTimeout(retypeset,500)}
-	if(window.mermaid)try{mermaid.run({querySelector:'.mermaid'})}catch(e){}}
+		else if(_mjRetries<30){_mjRetries++;setTimeout(retypeset,500)}
+		if(window.mermaid)try{mermaid.run({querySelector:'.mermaid'})}catch(e){}}
 	document.addEventListener('MathJax:ready',()=>{_mjRetries=0;retypeset()})
 	function retypesetDeferred(){nextTick(()=>{setTimeout(retypeset,0)})}
 	function _stripBackendWarnings(t){return t.replace(/(\n\n> ⚠[^\n]*)+$/,'')}
@@ -36,8 +36,7 @@ export function useMarkdown(upText) {
 	    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>')
 	    .replace(/`([^`]+)`/g,'<code>$1</code>')
 	    .replace(/^> (.+)$/gm,'<blockquote><p>$1</p></blockquote>')
-	    .replace(/\|(.+)\|/g,m=>'<tr>'+m.slice(1,-1).split('|').map(c=>/\-{3,}/.test(c)?'<th>'+c+'</th>':'<td>'+c.trim()+'</td>').join('')+'</tr>')
-	    .replace(/(<tr>.*<\/tr>\n?)+/g,'<table>$&</table>')
+	    .replace(/(?:^\|.+\|$\n?)+/gm,function(b){var r=b.trim().split('\n').filter(function(x){return x.trim()});if(r.length<2){return r.length?'<table><tbody>'+r.map(function(x){return'<tr>'+x.slice(1,-1).split('|').map(function(c){return'<td>'+c.trim()+'</td>'}).join('')+'</tr>'}).join('')+'</tbody></table>':''}var s=-1;for(var i=0;i<r.length;i++){if(/^\|[\s\-:]+\|$/.test(r[i])){s=i;break}}if(s===-1){return'<table><tbody>'+r.map(function(x){return'<tr>'+x.slice(1,-1).split('|').map(function(c){return'<td>'+c.trim()+'</td>'}).join('')+'</tr>'}).join('')+'</tbody></table>'}var a=r[s].slice(1,-1).split('|').map(function(c){c=c.trim();if(c[0]===':'&&c[c.length-1]===':')return'center';if(c[c.length-1]===':')return'right';return'left'});function g(t,c,i){var x=a[i];return'<'+t+(x&&x!=='left'?' style="text-align:'+x+'"':'')+'>'+c.trim()+'</'+t+'>'}var h=s>0?'<thead>'+r.slice(0,s).map(function(x){return'<tr>'+x.slice(1,-1).split('|').map(function(c,i){return g('th',c,i)}).join('')+'</tr>'}).join('')+'</thead>':'';var d=s+1<r.length?'<tbody>'+r.slice(s+1).map(function(x){return'<tr>'+x.slice(1,-1).split('|').map(function(c,i){return g('td',c,i)}).join('')+'</tr>'}).join('')+'</tbody>':'';return'<table>'+h+d+'</table>'})
 	    .replace(/^---$/gm,'<hr>')
 	  let tbl=[]
 	  t=t.replace(/(<table>[\s\S]*?<\/table>)/g,(_,c)=>{tbl.push(c);return '◈T'+tbl.length+'◈'})

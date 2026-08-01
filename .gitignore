@@ -56,13 +56,8 @@ docs/superpowers/
 
 # Personal reference docs (resume, interview prep, paper outputs)
 docs/GATAC_*
-docs/优秀项目经历.txt
 docs/公式汇总.md
-docs/后续完善分析报告.md
-docs/改进建议报告.md
-docs/简历项目描述.md
-docs/面试问答准备.md
-docs/面试问题.txt
+personal-notes/
 
 # Ruff
 .ruff_cache/

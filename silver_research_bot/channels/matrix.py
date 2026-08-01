@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Matrix (Element) channel — inbound sync + outbound message/media delivery."""
 
 import asyncio
@@ -5,7 +6,7 @@ import json
 import logging
 import mimetypes
 import time
-from dataclasses import dataclass
+from pydantic import BaseModel
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
@@ -100,14 +101,13 @@ MATRIX_HTML_CLEANER = nh3.Cleaner(
     link_rel="noopener noreferrer",
 )
 
-@dataclass
-class _StreamBuf:
+class _StreamBuf(BaseModel):
     """
     Represents a buffer for managing LLM response stream data.
 
     :ivar text: Stores the text content of the buffer.
     :type text: str
-    :ivar event_id: Identifier for the associated event. None indicates no 
+    :ivar event_id: Identifier for the associated event. None indicates no
         specific event association.
     :type event_id: str | None
     :ivar last_edit: Timestamp of the most recent edit to the buffer.

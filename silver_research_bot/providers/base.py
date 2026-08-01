@@ -3,23 +3,24 @@
     并实现了丰富的辅助功能：消息规范化、角色交替修正、图片占位处理、自动重试（含持久重试）、流式回调、错误分类等
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
 
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field
 
 from silver_research_bot.utils.helpers import image_placeholder_text
 
 
-@dataclass
-class ToolCallRequest:
+class ToolCallRequest(BaseModel):
     """LLM 返回的一个工具调用请求"""
     id: str
     'id：调用唯一标识（用于后续提交结果）'
@@ -53,14 +54,13 @@ class ToolCallRequest:
         return tool_call
 
 
-@dataclass
-class LLMResponse:
+class LLMResponse(BaseModel):
     """统一封装 LLM 返回的内容、工具调用、用量信息以及错误元数据"""
     content: str | None
-    tool_calls: list[ToolCallRequest] = field(default_factory=list)
+    tool_calls: list[ToolCallRequest] = Field(default_factory=list)
     finish_reason: str = "stop"
     '"stop"、"tool_calls"、"error" 等'
-    usage: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int] = Field(default_factory=dict)
     'token 统计'
     retry_after: float | None = None  # Provider supplied retry wait in seconds.
     'Provider 在重试之前应该等待多少秒'
@@ -92,10 +92,10 @@ class LLMResponse:
         return self.finish_reason in ("tool_calls", "stop")
 
 
-@dataclass(frozen=True)
-class GenerationSettings:
+class GenerationSettings(BaseModel):
     """保存提供者的默认生成参数，可以在实例化时设置，并在 chat_with_retry 等方法中作为后备值"""
 
+    model_config = ConfigDict(frozen=True, extra='forbid')
     temperature: float = 0.7
     max_tokens: int = 4096
     reasoning_effort: str | None = None

@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
+
+from pydantic import BaseModel, ConfigDict
 
 RESTART_NOTIFY_CHANNEL_ENV = "silver_research_bot_RESTART_NOTIFY_CHANNEL"
 RESTART_NOTIFY_CHAT_ID_ENV = "silver_research_bot_RESTART_NOTIFY_CHAT_ID"
 RESTART_STARTED_AT_ENV = "silver_research_bot_RESTART_STARTED_AT"
 
 
-@dataclass(frozen=True)
-class RestartNotice:
+class RestartNotice(BaseModel):
+    model_config = ConfigDict(frozen=True, extra='forbid')
     channel: str
     chat_id: str
     started_at_raw: str

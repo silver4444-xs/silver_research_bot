@@ -1,3 +1,4 @@
+from __future__ import annotations
 """配置加载工具模块，负责从 JSON 文件中加载应用配置、处理配置迁移、解析环境变量占位符，并将配置中的 SSRF 白名单应用到网络安全模块"""
 
 import json

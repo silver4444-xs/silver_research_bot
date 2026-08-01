@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel
 
-@dataclass
-class SearchUsageInfo:
+
+class SearchUsageInfo(BaseModel):
     """Structured usage info returned by a provider fetcher."""
 
     provider: str

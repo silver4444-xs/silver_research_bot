@@ -1,3 +1,4 @@
+from __future__ import annotations
 """负责构建发送给 LLM 的完整消息列表"""
 
 import base64
@@ -37,6 +38,27 @@ class ContextBuilder:
         '长期记忆存储（dream 相关）'
         self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None)
         '技能加载器，管理可动态激活的提示模块'
+        self.paper_knowledge = None
+        'PaperKnowledgeIndex 实例（paper_memory_mode 时由 loop.py 设置）'
+        self._paper_context: str = ""
+        '当前轮次的论文知识上下文（由 prepare_paper_context 设置）'
+        self._research_context_block: str = ""
+        '当前轮次的研究上下文块（由 ResearchContextTracker 设置）'
+        self._active_memory_text: str = ""
+        '当前轮次检索到的活跃记忆文本（由 ActiveMemoryRetriever 设置）'
+
+    async def prepare_paper_context(self, query: str) -> None:
+        """根据用户查询，从 PaperKnowledgeIndex 检索相关论文分析结果。
+
+        结果存入 self._paper_context，供 build_system_prompt() 注入。
+        """
+        if self.paper_knowledge is None:
+            self._paper_context = ""
+            return
+        try:
+            self._paper_context = await self.paper_knowledge.build_context(query)
+        except Exception:
+            self._paper_context = ""
 
     def build_system_prompt(
         self, skill_names=None, channel=None,
@@ -46,16 +68,6 @@ class ContextBuilder:
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
             parts.append(bootstrap)
-        memory_blocks = []
-        if active_memory_text:
-            memory_blocks.append(active_memory_text)
-        if project_memory_text:
-            memory_blocks.append(f"## Project Memory\n\n{project_memory_text}")
-        long_term = self.memory.get_memory_context()
-        if long_term and not self._is_template_content(self.memory.read_memory(), "memory/MEMORY.md"):
-            memory_blocks.append(f"## Long-term Memory\n\n{long_term}")
-        if memory_blocks:
-            parts.append("# Memory\n\n" + "\n\n".join(memory_blocks))
 
         always_skills = self.skills.get_always_skills()
         if always_skills:
@@ -67,12 +79,70 @@ class ContextBuilder:
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
 
+        memory_blocks = []
+        if active_memory_text:
+            memory_blocks.append(active_memory_text)
+        # 活跃记忆（ActiveMemoryRetriever 检索结果）
+        if self._active_memory_text:
+            memory_blocks.append(self._active_memory_text)
+        # 研究上下文（ResearchContextTracker 跨轮次状态）
+        if self._research_context_block:
+            memory_blocks.append(self._research_context_block)
+        if project_memory_text:
+            memory_blocks.append(f"## Project Memory\n\n{project_memory_text}")
+        # Paper knowledge: 从 PaperKnowledgeIndex 检索到的相关分析结果
+        if self._paper_context:
+            memory_blocks.append(self._paper_context)
+        long_term = self.memory.get_memory_context()
+        if long_term and not self._is_template_content(self.memory.read_memory(), "memory/MEMORY.md"):
+            memory_blocks.append(f"## Long-term Memory\n\n{long_term}")
+        if memory_blocks:
+            parts.append("# Memory\n\n" + "\n\n".join(memory_blocks))
+
         entries = self.memory.read_unprocessed_history(since_cursor=self.memory.get_last_dream_cursor())
         if entries:
             capped = entries[-self._MAX_RECENT_HISTORY:]
-            parts.append("# Recent History\n\n" + "\n".join(
-                f"- [{e['timestamp']}] {e['content']}" for e in capped
-            ))
+            # Lightweight dedup: skip entries whose content overlaps with
+            # long-term memory (MEMORY.md) to avoid feeding the same facts
+            # through multiple channels (system prompt + recent history).
+            long_term_text = self.memory.read_memory() or ""
+            memory_keywords = [
+                self._extract_keywords(line.lstrip("- "))
+                for line in long_term_text.split("\n")
+                if line.strip() and not line.strip().startswith("<!--")
+            ]
+            # Collect non-raw entries for raw_archive dedup
+            non_raw_contents = [
+                e.get("content", "") for e in capped
+                if e.get("source") != "raw_archive"
+            ]
+            lines: list[str] = []
+            for e in capped:
+                ts = e.get("timestamp", "?")
+                content = e.get("content", "")
+                source = e.get("source", "")
+                reliability = e.get("reliability", "")
+                # Skip raw_archive entries that duplicate a consolidation summary
+                if source == "raw_archive":
+                    if any(
+                        self._content_similarity(content, nc) > 0.5
+                        for nc in non_raw_contents
+                    ):
+                        continue
+                    lines.append(f"- [{ts}] [降级归档, 仅供参考] {content}")
+                    continue
+                if reliability == "low":
+                    lines.append(f"- [{ts}] [降级归档, 仅供参考] {content}")
+                    continue
+                # Skip entries whose keywords heavily overlap with MEMORY.md
+                entry_kw = self._extract_keywords(content)
+                if entry_kw and any(
+                    self._keyword_overlap(entry_kw, mkw) > 0.5
+                    for mkw in memory_keywords if mkw
+                ):
+                    continue
+                lines.append(f"- [{ts}] {content}")
+            parts.append("# Recent History\n\n" + "\n".join(lines))
 
         return "\n\n---\n\n".join(parts)
 
@@ -159,6 +229,44 @@ class ContextBuilder:
         except Exception:
             pass
         return False
+
+    @staticmethod
+    def _extract_keywords(text: str) -> frozenset[str]:
+        """从文本中提取关键词集合，用于轻量去重比较。"""
+        import re as _re
+        # Split Chinese text by common delimiters; keep CJK bigrams + ASCII words
+        tokens: set[str] = set()
+        # CJK character bigrams (for Chinese text)
+        cjk = _re.findall(r'[一-鿿]{2,}', text)
+        for chunk in cjk:
+            for i in range(len(chunk) - 1):
+                tokens.add(chunk[i:i + 2])
+        # ASCII words (3+ chars to avoid noise)
+        ascii_words = _re.findall(r'[a-zA-Z]{3,}', text)
+        tokens.update(w.lower() for w in ascii_words)
+        return frozenset(tokens)
+
+    @staticmethod
+    def _keyword_overlap(kw1: frozenset[str], kw2: frozenset[str]) -> float:
+        """返回两个关键词集合的 Jaccard 相似度。"""
+        if not kw1 or not kw2:
+            return 0.0
+        intersection = len(kw1 & kw2)
+        union = len(kw1 | kw2)
+        return intersection / union if union > 0 else 0.0
+
+    @staticmethod
+    def _content_similarity(text1: str, text2: str) -> float:
+        """基于词级 token 的简单文本相似度，用于 raw_archive 与正常条目的去重。"""
+        import re as _re
+        t1 = _re.split(r'\s+', text1.lower())
+        t2 = _re.split(r'\s+', text2.lower())
+        if not t1 or not t2:
+            return 0.0
+        set1, set2 = set(t1), set(t2)
+        intersection = len(set1 & set2)
+        union = len(set1 | set2)
+        return intersection / union if union > 0 else 0.0
 
     def build_messages(
         self,

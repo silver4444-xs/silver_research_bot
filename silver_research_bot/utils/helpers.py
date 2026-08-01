@@ -1,3 +1,4 @@
+from __future__ import annotations
 """silver_research_bot 的辅助函数。"""
 
 import base64

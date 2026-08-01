@@ -46,6 +46,76 @@ def _already_analyzed_response(paper_id: str, extracted: dict, ws_root) -> str:
     }, ensure_ascii=False, indent=2)
 
 
+def build_analysis_summary(
+    paper_dir, paper_id: str = "",
+    title: str = "", language: str = "",
+    artifacts: list | None = None, workspace_dir: str = "",
+) -> dict:
+    """Build a structured analysis summary dict from paper workspace files.
+
+    This is the canonical source for the ``analysis`` field consumed by the
+    front-end AnalysisReport component — used both by the SSE
+    ``analysis_complete`` event and the ``/api/paper/{id}/summary`` endpoint.
+    """
+    summary: dict = {
+        "paper_id": paper_id or paper_dir.name,
+        "title": title,
+        "language": language or "en",
+        "page_count": 0,
+        "formula_count": 0,
+        "figure_count": 0,
+        "has_translation": False,
+        "scores": {},
+        "audit_passed": True,
+        "issue_count": 0,
+        "key_findings": [],
+        "artifacts": artifacts or [],
+        "workspace_dir": workspace_dir or str(paper_dir),
+        "venue": "",
+    }
+    if not paper_dir.exists():
+        return summary
+
+    ef = paper_dir / "extracted.json"
+    if ef.exists():
+        ed = json.loads(ef.read_text(encoding="utf-8"))
+        if not summary["title"]:
+            summary["title"] = ed.get("title", "")
+        if not summary["language"] or summary["language"] == "auto":
+            summary["language"] = ed.get("language", "en")
+        summary["page_count"] = ed.get("page_count", 0)
+        summary["formula_count"] = ed.get("formula_count", 0)
+        summary["figure_count"] = len(ed.get("figures", []))
+        summary["venue"] = ed.get("venue", "")
+
+    rf = paper_dir / "review_scores.json"
+    if rf.exists():
+        summary["scores"] = json.loads(rf.read_text(encoding="utf-8"))
+
+    af = paper_dir / "audit_report.json"
+    if af.exists():
+        ad = json.loads(af.read_text(encoding="utf-8"))
+        summary["audit_passed"] = ad.get("passed", True)
+        summary["issue_count"] = len(ad.get("issues", []))
+
+    sf = paper_dir / "analysis_summary.json"
+    if sf.exists():
+        sd = json.loads(sf.read_text(encoding="utf-8"))
+        summary["key_findings"] = sd.get("key_findings", [])
+        summary["has_translation"] = sd.get("has_translation", False)
+
+    # Collect artifact filenames from disk
+    if not summary["artifacts"]:
+        collected = []
+        for fn in sorted(paper_dir.glob("*.md")):
+            collected.append(fn.name)
+        for fn in sorted(paper_dir.glob("*.html")):
+            collected.append(fn.name)
+        summary["artifacts"] = collected
+
+    return summary
+
+
 @tool_parameters(
     tool_parameters_schema(
         pdf_path=StringSchema("PDF 论文文件的绝对路径"),
@@ -92,55 +162,11 @@ class AnalyzePaperTool(Tool):
             return
         try:
             paper_dir = ws_root / "papers" / paper_id
-            summary = {
-                "paper_id": paper_id,
-                "title": result_title,
-                "language": result_language or "en",
-                "page_count": 0,
-                "formula_count": 0,
-                "figure_count": 0,
-                "has_translation": False,
-                "scores": {},
-                "audit_passed": True,
-                "issue_count": 0,
-                "key_findings": [],
-                "artifacts": result_artifacts or [],
-                "workspace_dir": result_workspace_dir or str(paper_dir),
-                "venue": "",
-            }
-            if paper_dir.exists():
-                ef = paper_dir / "extracted.json"
-                if ef.exists():
-                    ed = json.loads(ef.read_text(encoding="utf-8"))
-                    if not summary["title"]:
-                        summary["title"] = ed.get("title", "")
-                    if not summary["language"] or summary["language"] == "auto":
-                        summary["language"] = ed.get("language", "en")
-                    summary["page_count"] = ed.get("page_count", 0)
-                    summary["formula_count"] = ed.get("formula_count", 0)
-                    summary["figure_count"] = len(ed.get("figures", []))
-                    summary["venue"] = ed.get("venue", "")
-                rf = paper_dir / "review_scores.json"
-                if rf.exists():
-                    summary["scores"] = json.loads(rf.read_text(encoding="utf-8"))
-                af = paper_dir / "audit_report.json"
-                if af.exists():
-                    ad = json.loads(af.read_text(encoding="utf-8"))
-                    summary["audit_passed"] = ad.get("passed", True)
-                    summary["issue_count"] = len(ad.get("issues", []))
-                sf = paper_dir / "analysis_summary.json"
-                if sf.exists():
-                    sd = json.loads(sf.read_text(encoding="utf-8"))
-                    summary["key_findings"] = sd.get("key_findings", [])
-                    summary["has_translation"] = sd.get("has_translation", False)
-                # Collect artifact filenames from disk
-                if not summary["artifacts"]:
-                    artifacts = []
-                    for fn in sorted(paper_dir.glob("*.md")):
-                        artifacts.append(fn.name)
-                    for fn in sorted(paper_dir.glob("*.html")):
-                        artifacts.append(fn.name)
-                    summary["artifacts"] = artifacts
+            summary = build_analysis_summary(
+                paper_dir, paper_id,
+                title=result_title, language=result_language,
+                artifacts=result_artifacts, workspace_dir=result_workspace_dir,
+            )
             await self._event_emitter(json.dumps({
                 "type": "analysis_complete",
                 "paper_id": paper_id,
@@ -280,8 +306,10 @@ class AnalyzePaperTool(Tool):
 class ComparePapersTool(Tool):
     """触发多篇论文横向对比的工具。"""
 
-    def __init__(self, manager=None):
+    def __init__(self, manager=None, provider=None, model: str = ""):
         self._manager = manager
+        self._provider = provider
+        self._model = model
         self._event_emitter: Callable[[str], Awaitable[None]] | None = None
 
     @property
@@ -318,7 +346,11 @@ class ComparePapersTool(Tool):
                     "status": "running",
                     "message": f"正在对比 {len(ids)} 篇论文…",
                 }, ensure_ascii=False))
-            result = await self._manager.compare_papers(ids)
+            result = await self._manager.compare_papers(
+                ids,
+                provider=self._provider,
+                model=self._model,
+            )
             if self._event_emitter:
                 await self._event_emitter(json.dumps({
                     "type": "tool_progress",
@@ -327,7 +359,8 @@ class ComparePapersTool(Tool):
                     "status": "completed",
                     "message": "对比完成",
                 }, ensure_ascii=False))
-            return json.dumps(result, ensure_ascii=False, indent=2)
+            # CrossPaperComparison is a Pydantic BaseModel — use model_dump_json
+            return result.model_dump_json(indent=2)
         except Exception as e:
             return f"Error comparing papers: {e}"
 
@@ -353,8 +386,9 @@ class ListPapersTool(Tool):
         return (
             "List all papers that have been uploaded and analyzed. "
             "Returns paper_id, title, language, status, and available artifacts for each. "
-            "Pass paper_id to get detailed info for a specific paper (without full content — "
-            "use read_paper_artifact for that)."
+            "PASS paper_id TO LOOK UP A SINGLE PAPER — always prefer this over listing all "
+            "papers when you already know the paper_id (e.g. from an upload marker). "
+            "Use read_paper_artifact to read full analysis content."
         )
 
     @property
@@ -367,7 +401,34 @@ class ListPapersTool(Tool):
         if paper_id:
             paper = self._manager.get_paper(paper_id)
             if not paper:
-                return f"Paper '{paper_id}' not found."
+                # Filesystem fallback: scan workspace for paper dir
+                ws_root = getattr(self._manager, "workspace", None)
+                if ws_root:
+                    paper_dir = Path(ws_root) / "papers" / paper_id
+                    if paper_dir.is_dir():
+                        ef = paper_dir / "extracted.json"
+                        if ef.exists():
+                            try:
+                                extracted = json.loads(ef.read_text(encoding="utf-8"))
+                                pf = paper_dir / "progress.json"
+                                status = "extracted"
+                                if pf.exists():
+                                    progress = json.loads(pf.read_text(encoding="utf-8"))
+                                    if progress.get("status") == "completed":
+                                        status = "completed"
+                                return json.dumps({
+                                    "paper_id": paper_id,
+                                    "title": extracted.get("title", ""),
+                                    "language": extracted.get("language", "auto"),
+                                    "status": status,
+                                    "page_count": extracted.get("page_count", 0),
+                                    "has_translation": status == "completed",
+                                    "artifacts": [],
+                                    "_note": "Found via filesystem scan — not in manager index",
+                                }, ensure_ascii=False, indent=2)
+                            except Exception:
+                                pass
+                return f"Paper '{paper_id}' not found in index or workspace."
             return json.dumps({
                 "paper_id": paper.get("paper_id", ""),
                 "title": paper.get("title", ""),

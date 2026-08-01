@@ -2,25 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field
 
 from silver_research_bot.providers.base import LLMResponse, ToolCallRequest
 
 
-@dataclass(slots=True)
-class AgentHookContext:
+class AgentHookContext(BaseModel):
     """Mutable per-iteration state exposed to runner hooks."""
 
+    model_config = ConfigDict(extra='forbid')
     iteration: int
     messages: list[dict[str, Any]]
     response: LLMResponse | None = None
-    usage: dict[str, int] = field(default_factory=dict)
-    tool_calls: list[ToolCallRequest] = field(default_factory=list)
-    tool_results: list[Any] = field(default_factory=list)
-    tool_events: list[dict[str, str]] = field(default_factory=list)
+    usage: dict[str, int] = Field(default_factory=dict)
+    tool_calls: list[ToolCallRequest] = Field(default_factory=list)
+    tool_results: list[Any] = Field(default_factory=list)
+    tool_events: list[dict[str, str]] = Field(default_factory=list)
     final_content: str | None = None
     stop_reason: str | None = None
     error: str | None = None
@@ -42,6 +42,29 @@ class AgentHook:
         pass
 
     async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
+        pass
+
+    async def on_tool_start(self, context: AgentHookContext, tool_name: str, args_summary: str) -> None:
+        """工具调用开始前触发。args_summary 是参数的简短摘要（≤120 字符）。"""
+        pass
+
+    async def on_tool_end(
+        self, context: AgentHookContext,
+        tool_name: str, ok: bool, summary: str, duration_ms: float,
+    ) -> None:
+        """工具调用完成后触发。summary 是结果的简短摘要（≤200 字符）。"""
+        pass
+
+    async def on_governance(self, context: AgentHookContext, detail: str) -> None:
+        """上下文治理完成后触发。detail 描述做了什么（如"清理3条孤立结果"）。"""
+        pass
+
+    async def on_injection(self, context: AgentHookContext, count: int) -> None:
+        """中轮消息注入发生后触发。"""
+        pass
+
+    async def on_error(self, context: AgentHookContext, detail: str) -> None:
+        """LLM 调用或工具执行出错时触发。"""
         pass
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:

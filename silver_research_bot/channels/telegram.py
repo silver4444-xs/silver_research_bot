@@ -6,7 +6,7 @@ import asyncio
 import re
 import time
 import unicodedata
-from dataclasses import dataclass
+from pydantic import BaseModel, ConfigDict
 from typing import Any, Literal
 
 from loguru import logger
@@ -174,9 +174,9 @@ _SEND_RETRY_BASE_DELAY = 0.5  # seconds, doubled each retry
 _STREAM_EDIT_INTERVAL_DEFAULT = 0.6  # min seconds between edit_message_text calls
 
 
-@dataclass
-class _StreamBuf:
+class _StreamBuf(BaseModel):
     """Per-chat streaming accumulator for progressive message editing."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     text: str = ""
     message_id: int | None = None
     last_edit: float = 0.0

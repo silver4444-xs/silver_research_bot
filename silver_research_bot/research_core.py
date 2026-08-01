@@ -6,16 +6,16 @@ import json
 import random
 import statistics
 import uuid
-from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from silver_research_bot.config.paths import get_workspace_path
 
 
-@dataclass
-class ResearchArtifact:
+class ResearchArtifact(BaseModel):
     """单个科研产物。"""
 
     name: str
@@ -24,14 +24,13 @@ class ResearchArtifact:
     description: str = ""
 
 
-@dataclass
-class ResearchAuditEvent:
+class ResearchAuditEvent(BaseModel):
     """审计事件，记录每一步操作。"""
 
     stage: str
     message: str
     timestamp: str
-    payload: dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class ResearchCore:
@@ -67,7 +66,7 @@ class ResearchCore:
         audit_dir = run_dir / "audit"
         audit_dir.mkdir(parents=True, exist_ok=True)
         with (audit_dir / "events.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
+            f.write(json.dumps(event.model_dump(), ensure_ascii=False) + "\n")
 
     def brief(self, topic: str, hypothesis: str | None, constraints: list[str]) -> dict[str, Any]:
         return {

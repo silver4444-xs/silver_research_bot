@@ -1,12 +1,14 @@
 """定义了两种消息类型，用于在消息总线（message bus）中传递入站和出站消息"""
 
-from dataclasses import dataclass, field
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel, Field
 
-@dataclass
-class InboundMessage:
+
+class InboundMessage(BaseModel):
     """
     入站消息
     表示从外部聊天渠道（如 Telegram、Discord、Slack、WhatsApp）接收到的消息
@@ -19,11 +21,11 @@ class InboundMessage:
     '聊天或频道标识（用于确定消息所属的对话上下文）'
     content: str  # Message text
     '消息文本内容'
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = Field(default_factory=datetime.now)
     '消息接收时间，默认值为当前时间（datetime.now()）'
-    media: list[str] = field(default_factory=list)  # Media URLs
+    media: list[str] = Field(default_factory=list)  # Media URLs
     '附带的媒体文件 URL 列表，默认为空列表'
-    metadata: dict[str, Any] = field(default_factory=dict)  # Channel-specific data
+    metadata: dict[str, Any] = Field(default_factory=dict)  # Channel-specific data
     '渠道特定的额外元数据（如消息 ID、回复引用等），默认为空字典'
     session_key_override: str | None = None  # Optional override for thread-scoped sessions
     '可选的重写键，用于线程作用域会话标识，默认为 None'
@@ -38,8 +40,7 @@ class InboundMessage:
         return self.session_key_override or f"{self.channel}:{self.chat_id}"
 
 
-@dataclass
-class OutboundMessage:
+class OutboundMessage(BaseModel):
     """
     出站消息
     表示需要发送到某个聊天渠道的消息
@@ -53,9 +54,9 @@ class OutboundMessage:
     '要发送的消息文本'
     reply_to: str | None = None
     '可选，回复哪条消息的标识符（如消息 ID），默认 None'
-    media: list[str] = field(default_factory=list)
+    media: list[str] = Field(default_factory=list)
     '要发送的媒体文件 URL 列表'
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     '额外的渠道特定元数据（如消息格式选项、标记等）'
 
 

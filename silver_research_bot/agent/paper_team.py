@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from silver_research_bot.providers.base import LLMProvider
@@ -12,11 +13,10 @@ if TYPE_CHECKING:
     from silver_research_bot.agent.runner import AgentRunner
 
 
-@dataclass
-class TeamRole:
+class TeamRole(BaseModel):
     name: str
     system_prompt: str
-    allowed_tools: list[str] = field(default_factory=list)
+    allowed_tools: list[str] = Field(default_factory=list)
     temperature: float = 0.1
 
     def build_messages(self, task: str) -> list[dict]:

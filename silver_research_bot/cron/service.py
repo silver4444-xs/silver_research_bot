@@ -1,10 +1,11 @@
 """Cron service for scheduling agent tasks."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import time
 import uuid
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Literal
@@ -423,7 +424,7 @@ class CronService:
             self._save_store()
             self._arm_timer()
         else:
-            self._append_action("add", asdict(job))
+            self._append_action("add", job.model_dump())
 
         logger.info("Cron: added job '{}' ({})", name, job.id)
         return job
@@ -482,7 +483,7 @@ class CronService:
                     self._save_store()
                     self._arm_timer()
                 else:
-                    self._append_action("update", asdict(job))
+                    self._append_action("update", job.model_dump())
                 return job
         return None
 
@@ -534,7 +535,7 @@ class CronService:
             self._save_store()
             self._arm_timer()
         else:
-            self._append_action("update", asdict(job))
+            self._append_action("update", job.model_dump())
 
         logger.info("Cron: updated job '{}' ({})", job.name, job.id)
         return job

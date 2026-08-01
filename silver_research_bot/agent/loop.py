@@ -489,7 +489,11 @@ class AgentLoop:
             from silver_research_bot.paper_analyzer.tools import (
                 ComparePapersTool, ListPapersTool, ReadPaperArtifactTool,
             )
-            self.tools.register(ComparePapersTool(manager=self._paper_manager))
+            self.tools.register(ComparePapersTool(
+                manager=self._paper_manager,
+                provider=self.provider,
+                model=self.model,
+            ))
             self.tools.register(ListPapersTool(manager=self._paper_manager))
             self.tools.register(ReadPaperArtifactTool(manager=self._paper_manager))
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
@@ -1442,41 +1446,51 @@ class AgentLoop:
             and "analyze_paper" not in (tools_used or [])
             and not already_retried
         ):
-            logger.warning(
-                "Paper upload detected but analyze_paper not called — enforcing tool gate"
-            )
             pid = paper_marker.group(1)
-            # Extract pdf_path from the marker if present
-            _path_m = _re.search(
-                r'pdf_path=(\S+?)(?:[,,\]]|$)', msg.content or ""
-            )
-            ppath = _path_m.group(1) if _path_m else "unknown"
-            correction = (
-                f"[系统提醒] 检测到论文(paper_id={pid})已上传但尚未完成分析。"
-                f"请先调用 analyze_paper(pdf_path=\"{ppath}\", paper_id=\"{pid}\") "
-                f"完成论文分析，然后再回答用户的问题。不要跳过分析步骤。"
-            )
-            fallback_msg = InboundMessage(
-                channel=msg.channel,
-                sender_id="user",
-                chat_id=msg.chat_id,
-                content=correction,
-                media=[],
-                metadata={
-                    **(msg.metadata or {}),
-                    "_paper_gate_retry": True,
-                    "message_id": msg.metadata.get("message_id") if msg.metadata else None,
-                },
-            )
-            return await self._process_message(
-                fallback_msg,
-                session_key=session_key,
-                on_progress=on_progress,
-                on_stream=on_stream,
-                on_stream_end=on_stream_end,
-                on_event=on_event,
-                pending_queue=pending_queue,
-            )
+            # Skip gate if paper is already fully analyzed (e.g. duplicate upload)
+            if (
+                self._paper_manager is not None
+                and (self._paper_manager._index or {}).get(pid, {}).get("status") == "completed"
+            ):
+                logger.info(
+                    "Paper upload detected but paper %s already analyzed — skipping tool gate",
+                    pid,
+                )
+            else:
+                logger.warning(
+                    "Paper upload detected but analyze_paper not called — enforcing tool gate"
+                )
+                # Extract pdf_path from the marker if present
+                _path_m = _re.search(
+                    r'pdf_path=(\S+?)(?:[,,\]]|$)', msg.content or ""
+                )
+                ppath = _path_m.group(1) if _path_m else "unknown"
+                correction = (
+                    f"[系统提醒] 检测到论文(paper_id={pid})已上传但尚未完成分析。"
+                    f"请先调用 analyze_paper(pdf_path=\"{ppath}\", paper_id=\"{pid}\") "
+                    f"完成论文分析，然后再回答用户的问题。不要跳过分析步骤。"
+                )
+                fallback_msg = InboundMessage(
+                    channel=msg.channel,
+                    sender_id="user",
+                    chat_id=msg.chat_id,
+                    content=correction,
+                    media=[],
+                    metadata={
+                        **(msg.metadata or {}),
+                        "_paper_gate_retry": True,
+                        "message_id": msg.metadata.get("message_id") if msg.metadata else None,
+                    },
+                )
+                return await self._process_message(
+                    fallback_msg,
+                    session_key=session_key,
+                    on_progress=on_progress,
+                    on_stream=on_stream,
+                    on_stream_end=on_stream_end,
+                    on_event=on_event,
+                    pending_queue=pending_queue,
+                )
 
         '''
         2.11 确保最终内容非空

@@ -79,6 +79,7 @@
             <AnalysisReport
               :analysis="m.analysis"
               :content="m.content"
+              :streaming="i === chatMsgs.length - 1 && chatLoading"
               @export="exportChat"
               @ask-follow-up="focusInput('关于这篇论文，')"
             />
@@ -262,17 +263,38 @@ async function uploadAndStorePaper() {
     // ——— Dedup: paper was already uploaded and analyzed ———
     if (r.duplicate && r.status === 'already_analyzed') {
       chatAttach.value = null
-      pendingPaper.value = null
+      // Preserve paper context so follow-up questions include paper info
+      pendingPaper.value = {
+        paper_id: r.paper_id,
+        title: r.title,
+        pdf_path: r.workspace_pdf_path || '',
+        filename: f.name,
+        already_analyzed: true,
+      }
+      // Fetch structured summary so AnalysisReport renders the card
+      try {
+        const summary = await api('/api/paper/' + r.paper_id + '/summary')
+        if (summary && summary.paper_id) {
+          chatMsgs.value.push({
+            role: 'agent',
+            content: '📄 **此论文已分析完成！**\n\n'
+              + '论文: **' + r.title + '**\n'
+              + '语言: ' + (r.language === 'en' ? '英文' : '中文')
+              + ' | ID: `' + r.paper_id + '`\n\n'
+              + '无需重新分析，可直接查看已有产物。请告诉我您想了解什么。',
+            analysis: summary,
+          })
+          chatLoading.value = false
+          return
+        }
+      } catch (_) { /* fall through to plain-text fallback */ }
       chatMsgs.value.push({
         role: 'agent',
         content: '📄 **此论文已分析完成！**\n\n'
           + '论文: **' + r.title + '**\n'
           + '语言: ' + (r.language === 'en' ? '英文' : '中文')
           + ' | ID: `' + r.paper_id + '`\n\n'
-          + '无需重新分析，可直接查看已有产物：\n'
-          + '- 输入 "列出论文" 查看详情\n'
-          + '- 输入 "阅读 ' + r.paper_id + ' 的翻译" 查看翻译\n'
-          + '- 输入 "对 ' + r.paper_id + ' 提问" 进行交互问答',
+          + '无需重新分析，可直接查看已有产物。请告诉我您想了解什么。',
       })
       chatLoading.value = false
       return
@@ -326,7 +348,12 @@ async function doChat(overrideMessage) {
   let sendMessage = rawMessage
   if (hasPending) {
     const pp = pendingPaper.value
-    sendMessage = '[已上传论文: ' + pp.title + ', paper_id=' + pp.paper_id + ', pdf_path=' + pp.pdf_path + ']'
+    if (pp.already_analyzed) {
+      // Paper already analyzed — use reference marker (not upload marker)
+      sendMessage = '[已分析论文: ' + pp.title + ', paper_id=' + pp.paper_id + ']'
+    } else {
+      sendMessage = '[已上传论文: ' + pp.title + ', paper_id=' + pp.paper_id + ', pdf_path=' + pp.pdf_path + ']'
+    }
     if (rawMessage) sendMessage += '\n\n' + rawMessage
     pendingPaper.value = null
     chatAttach.value = null
@@ -491,7 +518,28 @@ function exportChat() {
   const lines = ['# ' + title, '', '> 导出日期: ' + date, '']
   for (const m of chatMsgs.value) {
     const role = m.role === 'user' ? '你' : 'Agent'
-    lines.push('## ' + role, '', m.content, '')
+    lines.push('## ' + role, '')
+    // Embed structured analysis summary when available
+    if (m.analysis) {
+      const a = m.analysis
+      if (a.scores && Object.keys(a.scores).length) {
+        lines.push('| 评分维度 | 分数 |')
+        lines.push('|----------|------|')
+        for (const [k, v] of Object.entries(a.scores)) {
+          const labels = { theory: '理论视角', engineering: '工程视角', domain: '领域视角', overall: '综合' }
+          lines.push('| ' + (labels[k] || k) + ' | ' + v + '/10 |')
+        }
+        lines.push('')
+      }
+      lines.push('> 审计: ' + (a.audit_passed ? '✅ 通过' : '⚠️ 未通过')
+        + (a.issue_count != null ? ' | ' + a.issue_count + ' 个待改进项' : ''))
+      if (a.key_findings && a.key_findings.length) {
+        lines.push('> **关键发现:**')
+        for (const kf of a.key_findings) lines.push('> - ' + kf)
+      }
+      lines.push('')
+    }
+    lines.push(m.content, '')
   }
   const text = lines.join('\n')
   const blob = new Blob(['﻿' + text], { type: 'text/markdown;charset=utf-8' })
@@ -616,24 +664,69 @@ async function loadSessionHistory() {
   try {
     const data = await api('/api/agent/sessions/' + sessionId.value)
     if (data.messages && data.messages.length) {
-      const msgs = []
-      for (const m of data.messages) {
-        if (m.role === 'user' || m.role === 'assistant') {
-          let content = ''
-          if (typeof m.content === 'string') {
-            content = m.content
-          } else if (Array.isArray(m.content)) {
-            content = m.content.map(c => c.text || '').join('')
+      const allMsgs = data.messages
+
+      // ── Pass 1: find paper_ids from tool messages ──
+      // Map: assistant-message index in allMsgs → paper_id
+      const analysisMap = new Map()
+      for (let i = 0; i < allMsgs.length; i++) {
+        const m = allMsgs[i]
+        if (m.role !== 'tool') continue
+        let tc = m.content
+        if (typeof tc !== 'string') continue
+        // Tool results may be truncated; still try to parse paper_id
+        let paperId = null
+        try {
+          const parsed = JSON.parse(tc)
+          if (parsed.paper_id && (parsed.status === 'completed' || parsed.status === 'already_analyzed')) {
+            paperId = parsed.paper_id
           }
-          if (content) {
-            msgs.push({ role: m.role === 'assistant' ? 'agent' : 'user', content })
+        } catch (_) {
+          // Fallback: extract paper_id via regex for truncated JSON
+          const m2 = tc.match(/"paper_id"\s*:\s*"([^"]+)"/)
+          if (m2) paperId = m2[1]
+        }
+        if (!paperId) continue
+        // The next assistant message with content is the analysis report
+        for (let j = i + 1; j < allMsgs.length; j++) {
+          if (allMsgs[j].role === 'assistant' && allMsgs[j].content) {
+            analysisMap.set(j, paperId)
+            break
           }
         }
       }
+
+      // ── Pass 2: build display messages ──
+      const msgs = []
+      for (let i = 0; i < allMsgs.length; i++) {
+        const m = allMsgs[i]
+        if (m.role !== 'user' && m.role !== 'assistant') continue
+        let content = ''
+        if (typeof m.content === 'string') {
+          content = m.content
+        } else if (Array.isArray(m.content)) {
+          content = m.content.map(c => c.text || '').join('')
+        }
+        if (!content) continue
+        const entry = { role: m.role === 'assistant' ? 'agent' : 'user', content }
+        // Attach structured analysis if this message follows a paper analysis tool
+        const paperId = analysisMap.get(i)
+        if (paperId) {
+          try {
+            const summary = await api('/api/paper/' + paperId + '/summary')
+            if (summary && summary.paper_id) {
+              entry.analysis = summary
+            }
+          } catch (e) {
+            console.warn('Failed to restore analysis for paper:', paperId, e)
+          }
+        }
+        msgs.push(entry)
+      }
+
       if (msgs.length) {
         chatMsgs.value = msgs
         scrollToBottom()
-        // Generate title if missing
         const hasTitle = data.metadata && data.metadata.title
         if (!hasTitle) generateTitle()
         return

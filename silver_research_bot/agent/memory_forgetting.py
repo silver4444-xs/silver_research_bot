@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from silver_research_bot.agent.memory import MemoryEntry
 
 
-@dataclass
-class ConsolidationReminder:
+class ConsolidationReminder(BaseModel):
     entry_uid: str
     entry_text: str
     retention: float  # 0.0 = 完全遗忘, 1.0 = 完整记忆
@@ -23,10 +23,12 @@ class ConsolidationReminder:
 class ForgettingCurve:
     r"""Ebbinghaus 遗忘曲线: R = e^(-t/S), S = halflife / ln(2)."""
 
-    def __init__(self, halflife_days: float = 7.0, importance_threshold: float = 3.0):
+    def __init__(self, halflife_days: float = 7.0, importance_threshold: float = 3.0, enabled: bool = True):
         self.halflife = halflife_days
         self._S = halflife_days / math.log(2)
         self.importance_threshold = importance_threshold
+        self.enabled = enabled
+        '是否启用遗忘曲线（paper_memory_mode 下为 False）'
 
     def retention(self, days_since_last_access: float) -> float:
         if days_since_last_access <= 0:

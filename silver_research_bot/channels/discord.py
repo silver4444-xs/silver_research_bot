@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import time
-from dataclasses import dataclass
+from pydantic import BaseModel, ConfigDict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -37,10 +37,10 @@ MAX_MESSAGE_LEN = 2000  # Discord message character limit
 TYPING_INTERVAL_S = 8
 
 
-@dataclass
-class _StreamBuf:
+class _StreamBuf(BaseModel):
     """Per-chat streaming accumulator for progressive Discord message edits."""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     text: str = ""
     message: Any | None = None
     last_edit: float = 0.0

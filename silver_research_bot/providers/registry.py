@@ -11,14 +11,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_snake
 
 
-@dataclass(frozen=True)
-class ProviderSpec:
+class ProviderSpec(BaseModel):
+    model_config = ConfigDict(frozen=True, extra='forbid')
     """
     某 LLM 提供商的元数据。具体示例请参见下文的“提供商”部分。
 

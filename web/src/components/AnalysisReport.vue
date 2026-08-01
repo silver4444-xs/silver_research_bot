@@ -30,15 +30,14 @@
       </div>
     </div>
 
-    <!-- L2: Dashboard chips -->
+    <!-- L2: Dashboard chips — analysis status & actions only (metadata lives in Hero) -->
     <div class="ar-dashboard">
       <span class="ar-chip" :class="analysis.audit_passed ? 'ar-chip-ok' : 'ar-chip-warn'">
         {{ analysis.audit_passed ? '✅' : '⚠️' }} 审计{{ analysis.audit_passed ? '通过' : '未通过' }}
       </span>
       <span v-if="analysis.issue_count != null" class="ar-chip">📋 {{ analysis.issue_count }} 个待改进项</span>
-      <span v-if="analysis.page_count" class="ar-chip">📄 {{ analysis.page_count }} 页</span>
-      <span v-if="analysis.formula_count" class="ar-chip">📐 {{ analysis.formula_count }} 公式</span>
       <span v-if="analysis.has_translation" class="ar-chip">🌐 已翻译</span>
+      <span v-if="analysis.artifacts && analysis.artifacts.length" class="ar-chip">📦 {{ analysis.artifacts.length }} 个产物</span>
     </div>
 
     <!-- L3: Review scores (always expanded) -->
@@ -53,7 +52,10 @@
     </div>
 
     <!-- L4: Collapsible section cards -->
-    <div class="ar-sections">
+    <div v-if="streaming" class="ar-streaming-hint">
+      <span class="ar-streaming-pulse"></span> 正在生成详细分析…
+    </div>
+    <div v-else-if="parsedCards.length" class="ar-sections">
       <CollapsibleCard
         v-for="card in parsedCards"
         :key="card.id"
@@ -64,6 +66,12 @@
       >
         <div v-html="card.html"></div>
       </CollapsibleCard>
+    </div>
+    <div v-else class="ar-sections ar-sections-empty">
+      <div class="ar-empty-summary">
+        <p>📋 分析报告已生成。查看上方评分和关键发现了解论文核心信息。</p>
+        <p class="ar-empty-hint">详细分析内容将在对话完成后展示。</p>
+      </div>
     </div>
   </div>
 </template>
@@ -76,6 +84,7 @@ import ScoreBadge from './ScoreBadge.vue'
 const props = defineProps({
   analysis: { type: Object, required: true },
   content: { type: String, default: '' },
+  streaming: { type: Boolean, default: false },
 })
 
 defineEmits(['export', 'askFollowUp'])
@@ -89,7 +98,7 @@ const CARD_PATTERNS = [
   { id: 'motivation',   re: /🧠\s*研究问题|研究问题与动机|一[、.].*(?:研究|动机|核心问题)|核心问题与研究动机/, icon: '🧠' },
   { id: 'system_model', re: /🏗️\s*系统模型|二[、.].*(?:系统|模型|架构)|系统模型(?:与|架构)/, icon: '🏗️' },
   { id: 'algorithm',    re: /🔬\s*.*算法|三[、.].*算法|算法设计/, icon: '🔬' },
-  { id: 'experiment',   re: /📊\s*实验|四[、.].*实验|实验(?:结果|评估)/, icon: '📊' },
+  { id: 'experiment',   re: /📊\s*实验|四[、.].*实验|实验(?:设计|结果|评估)/, icon: '📊' },
   { id: 'review',       re: /📋\s*.*审稿|五[、.].*(?:审稿|维度|评价)|多维.*审稿|审稿评价/, icon: '📋' },
   { id: 'suggestions',  re: /💡\s*.*建议|📈\s*可视化|📋.*建议|六[、.].*(?:贡献|总结|建议|改进|未来)|研究贡献|主要贡献/, icon: '💡' },
   { id: 'audit',        re: /🔍\s*.*审计|质量审计|.*改进建议/, icon: '🔍' },
@@ -130,12 +139,13 @@ const parsedCards = computed(() => {
   const raw = props.content || ''
   if (!raw) return []
 
-  // Find all ### or ## headings with position
-  const headingRe = /^(#{2,3})\s+([^\n]+)$/gm
+  // Find all # / ## / ### / #### headings with position
+  const headingRe = /^(#{1,4})\s+([^\n]+)$/gm
   const headings = []
   let m
   while ((m = headingRe.exec(raw)) !== null) {
-    headings.push({ index: m.index, level: m[0].startsWith('###') ? 3 : 2, text: m[2].trim() })
+    const level = m[1].length
+    headings.push({ index: m.index, level, text: m[2].trim() })
   }
 
   if (headings.length === 0) {
@@ -144,7 +154,11 @@ const parsedCards = computed(() => {
     return [{ id: 'overview', title: '分析报告', icon: '📄', preview, html: md.renderFormula(raw) }]
   }
 
+  // Icon palette for unmatched sections (cycles when exhausted)
+  const FALLBACK_ICONS = ['📌', '📝', '🔎', '📖', '💭', '📑']
+
   const cards = []
+  let fallbackIdx = 0
   for (let i = 0; i < headings.length; i++) {
     const h = headings[i]
     const nextIdx = i + 1 < headings.length ? headings[i + 1].index : raw.length
@@ -155,19 +169,31 @@ const parsedCards = computed(() => {
     for (const pat of CARD_PATTERNS) {
       if (pat.re.test(h.text)) { matched = pat; break }
     }
-    if (!matched) continue
 
     const bodyStart = sectionText.indexOf('\n')
     const body = bodyStart >= 0 ? sectionText.slice(bodyStart + 1).trim() : ''
     const preview = body.replace(/[#*`|>\-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80)
 
-    cards.push({
-      id: matched.id,
-      title: h.text.replace(/^[📄🧠🏗️🎯🔬📊📋🔍💡📈]\s*/, '').replace(/^[一二三四五六七八九十]+[、.，]\s*/, '').trim(),
-      icon: matched.icon,
-      preview,
-      html: md.renderFormula(sectionText),
-    })
+    if (matched) {
+      cards.push({
+        id: matched.id,
+        title: h.text.replace(/^[📄🧠🏗️🎯🔬📊📋🔍💡📈]\s*/, '').replace(/^[一二三四五六七八九十]+[、.，]\s*/, '').trim(),
+        icon: matched.icon,
+        preview,
+        html: md.renderFormula(sectionText),
+      })
+    } else {
+      // Fallback: unmatched sections still get a card (prevents silent data loss)
+      const cleanTitle = h.text.replace(/^[📄🧠🏗️🎯🔬📊📋🔍💡📈]\s*/, '').replace(/^[一二三四五六七八九十]+[、.，]\s*/, '').trim()
+      cards.push({
+        id: 'section_' + i,
+        title: cleanTitle,
+        icon: FALLBACK_ICONS[fallbackIdx % FALLBACK_ICONS.length],
+        preview,
+        html: md.renderFormula(sectionText),
+      })
+      fallbackIdx++
+    }
   }
   return cards
 })
@@ -176,6 +202,12 @@ const parsedCards = computed(() => {
 <style scoped>
 .ar-root {
   width: 100%; max-width: 100%;
+  animation: ar-fadein 0.35s ease;
+}
+
+@keyframes ar-fadein {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* L1: Hero */
@@ -244,6 +276,40 @@ const parsedCards = computed(() => {
 
 /* L4: Sections */
 .ar-sections { display: flex; flex-direction: column; }
+
+/* Streaming hint */
+.ar-streaming-hint {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-4); font-size: 13px; color: var(--c-text-muted);
+  background: rgba(99, 102, 241, 0.03);
+  border: 1px dashed var(--c-border);
+  border-radius: var(--r-md);
+  animation: ar-fadein 0.3s ease;
+}
+.ar-streaming-pulse {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--c-accent);
+  animation: ar-pulse 1.2s ease-in-out infinite;
+}
+@keyframes ar-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* Empty summary fallback */
+.ar-sections-empty {
+  padding: var(--s-4);
+  background: rgba(99, 102, 241, 0.03);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+}
+.ar-empty-summary p {
+  margin: 0; font-size: 14px; color: var(--c-text-secondary); line-height: 1.6;
+}
+.ar-empty-hint {
+  margin-top: var(--s-2) !important;
+  font-size: 12px !important; color: var(--c-text-muted);
+}
 
 /* Responsive */
 @media (max-width: 860px) {

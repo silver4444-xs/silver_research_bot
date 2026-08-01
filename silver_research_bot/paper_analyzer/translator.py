@@ -394,6 +394,7 @@ async def translate_paper(
     figures: list[dict] | None = None,
     tables: list[dict] | None = None,
     paper_id: str = "",
+    on_progress: "Callable[[dict], Awaitable[None]] | None" = None,
 ) -> tuple[str, list[str]]:
     """将英文论文全文翻译为中文，公式转为 LaTeX Markdown。
 
@@ -417,6 +418,9 @@ async def translate_paper(
     chunk_log: list[str] = []
 
     for i, (chunk, overlap) in enumerate(chunks):
+        if on_progress:
+            await on_progress({"stage": "translate", "status": "running",
+                               "message": f"正在翻译第 {i+1}/{len(chunks)} 块…"})
         prev_tail_en = ""
         if i > 0:
             prev_chunk_text = chunks[i - 1][0]

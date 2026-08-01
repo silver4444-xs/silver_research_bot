@@ -32,10 +32,14 @@ class ActiveMemoryRetriever:
         entries = self.memory_store.parse_memory_entries()
         if not entries:
             return []
+
+        # 批量 embedding：一次 API 调用处理所有条目（而非 O(n) 次）
         query_vec = await self.embedder.embed_single(query)
+        entry_texts = [e.text for e in entries]
+        entry_vecs = await self.embedder.embed_batch(entry_texts)
+
         scored = []
-        for entry in entries:
-            entry_vec = await self.embedder.embed_single(entry.text)
+        for entry, entry_vec in zip(entries, entry_vecs):
             sim = self._cosine(query_vec, entry_vec)
             combined = sim * (0.5 + 0.5 * entry.importance / 10.0)
             scored.append((entry, combined))

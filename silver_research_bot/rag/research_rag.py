@@ -5,20 +5,20 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, Field
+
 from silver_research_bot.config.paths import get_workspace_path
-from silver_research_bot.research_bm25 import BM25Scorer
+from silver_research_bot.rag.research_bm25 import BM25Scorer
 
 if TYPE_CHECKING:
     from silver_research_bot.providers.base import LLMProvider
 
 
-@dataclass
-class PaperChunk:
+class PaperChunk(BaseModel):
     """文献切片。"""
 
     chunk_id: str
@@ -28,7 +28,7 @@ class PaperChunk:
     text: str
     source: str = "manual"
     chunk_type: str = "text"  # "text" | "formula" | "figure" | "table"
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ResearchRAG:
@@ -74,15 +74,15 @@ class ResearchRAG:
     def _ensure_init(self) -> None:
         if self._initialized:
             return
-        from silver_research_bot.research_embedder import EmbeddingEngine
-        from silver_research_bot.research_vector_store import VectorStore
+        from silver_research_bot.rag.research_embedder import EmbeddingEngine
+        from silver_research_bot.rag.research_vector_store import VectorStore
 
         self._embedder = EmbeddingEngine(
             provider=self._provider, model=self._embedding_model, dim=self._embedding_dim,
         )
         self._vector_store = VectorStore(self.root / "vectors", dim=self._embedding_dim)
         if self._provider and self._rerank_enabled:
-            from silver_research_bot.research_reranker import LLMReranker
+            from silver_research_bot.rag.research_reranker import LLMReranker
             self._reranker = LLMReranker(self._provider, model=self._embedding_model)
         self._rebuild_bm25()
         self._initialized = True
@@ -117,7 +117,7 @@ class ResearchRAG:
 
     def _append_corpus(self, chunk: PaperChunk) -> None:
         with self.corpus_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(asdict(chunk), ensure_ascii=False) + "\n")
+            f.write(json.dumps(chunk.model_dump(), ensure_ascii=False) + "\n")
 
     def _append_log(self, action: str, payload: dict[str, Any]) -> None:
         with self.logs_path.open("a", encoding="utf-8") as f:
@@ -174,7 +174,7 @@ class ResearchRAG:
             self._bm25.add(chunk.chunk_id, full_text)
 
         if extracted:
-            from silver_research_bot.research_multimodal import MultimodalIndexer
+            from silver_research_bot.rag.research_multimodal import MultimodalIndexer
             mm_chunks = MultimodalIndexer.index_from_extracted(extracted, pid, title)
             for mc in mm_chunks:
                 chunks.append(mc)

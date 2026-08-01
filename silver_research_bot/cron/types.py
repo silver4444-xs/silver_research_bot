@@ -1,11 +1,13 @@
 """描述和管理定时任务的数据结构"""
 
-from dataclasses import dataclass, field
+from __future__ import annotations
+
 from typing import Literal
 
+from pydantic import BaseModel, ConfigDict, Field
 
-@dataclass
-class CronSchedule:
+
+class CronSchedule(BaseModel):
     """
     Cron 任务的调度规则
     定义任务何时触发，支持三种方式：
@@ -16,6 +18,7 @@ class CronSchedule:
 
     **"cron"**：标准 cron 表达式（如"0 9 * * *"表示每天 9:00），配合可选的tz时区字符串（如"Asia/Shanghai"`）。
     """
+    model_config = ConfigDict(extra='forbid')
     kind: Literal["at", "every", "cron"]
     '定时任务类型：at（指定时刻）、every（固定间隔）、cron（cron表达式）'
     at_ms: int | None = None
@@ -28,9 +31,9 @@ class CronSchedule:
     'cron表达式对应的时区'
 
 
-@dataclass
-class CronPayload:
+class CronPayload(BaseModel):
     """任务载荷——任务运行时该怎么做"""
+    model_config = ConfigDict(extra='forbid')
     kind: Literal["system_event", "agent_turn"] = "agent_turn"
     '任务执行类型：system_event 或 agent_turn'
     message: str = ""
@@ -43,9 +46,9 @@ class CronPayload:
     '消息接收目标'
 
 
-@dataclass
-class CronRunRecord:
+class CronRunRecord(BaseModel):
     """一个定时任务的单次执行记录."""
+    model_config = ConfigDict(extra='forbid')
     run_at_ms: int
     '执行时间戳（毫秒）'
     status: Literal["ok", "error", "skipped"]
@@ -56,9 +59,9 @@ class CronRunRecord:
     '错误信息（执行失败时填写）'
 
 
-@dataclass
-class CronJobState:
+class CronJobState(BaseModel):
     """任务的运行状态"""
+    model_config = ConfigDict(extra='forbid')
     next_run_at_ms: int | None = None
     '下次执行的时间戳（毫秒），未设置则为 None'
     last_run_at_ms: int | None = None
@@ -67,24 +70,24 @@ class CronJobState:
     '最后一次执行的状态：成功/失败/跳过，未执行过则为 None'
     last_error: str | None = None
     '最后一次执行的错误信息，无错误则为 None'
-    run_history: list[CronRunRecord] = field(default_factory=list)
+    run_history: list[CronRunRecord] = Field(default_factory=list)
     '执行历史记录列表，存储所有 CronRunRecord 执行记录'
 
 
-@dataclass
-class CronJob:
+class CronJob(BaseModel):
     """一个定时任务"""
+    model_config = ConfigDict(extra='forbid')
     id: str
     '定时任务唯一标识 ID'
     name: str
     '任务名称（用于展示/管理）'
     enabled: bool = True
     '是否启用该任务，默认启用（True）'
-    schedule: CronSchedule = field(default_factory=lambda: CronSchedule(kind="every"))
+    schedule: CronSchedule = Field(default_factory=lambda: CronSchedule(kind="every"))
     '任务调度规则（时间/间隔/cron），默认是循环执行类型'
-    payload: CronPayload = field(default_factory=CronPayload)
+    payload: CronPayload = Field(default_factory=CronPayload)
     '任务执行时的载荷（要做什么、发什么消息）'
-    state: CronJobState = field(default_factory=CronJobState)
+    state: CronJobState = Field(default_factory=CronJobState)
     '任务运行状态（下次执行时间、历史记录等）'
     created_at_ms: int = 0
     '任务创建时间戳（毫秒）'
@@ -95,22 +98,14 @@ class CronJob:
 
     @classmethod
     def from_dict(cls, kwargs: dict):
-        """用于从字典重建 CronJob 对象"""
-        state_kwargs = dict(kwargs.get("state", {}))
-        state_kwargs["run_history"] = [
-            record if isinstance(record, CronRunRecord) else CronRunRecord(**record)
-            for record in state_kwargs.get("run_history", [])
-        ]
-        kwargs["schedule"] = CronSchedule(**kwargs.get("schedule", {"kind": "every"}))
-        kwargs["payload"] = CronPayload(**kwargs.get("payload", {}))
-        kwargs["state"] = CronJobState(**state_kwargs)
-        return cls(**kwargs)
+        """从字典重建 CronJob 对象，Pydantic 自动处理嵌套模型验证."""
+        return cls.model_validate(kwargs)
 
 
-@dataclass
-class CronStore:
+class CronStore(BaseModel):
     """定时任务的持久化存储"""
+    model_config = ConfigDict(extra='forbid')
     version: int = 1
     '存储格式版本，用于兼容性'
-    jobs: list[CronJob] = field(default_factory=list)
+    jobs: list[CronJob] = Field(default_factory=list)
     '定时任务列表'

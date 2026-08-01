@@ -65,4 +65,9 @@ const colorClass = computed(() => {
 .score-amber .score-value { color: var(--c-warn); }
 .score-red .score-bar-fill { background: var(--c-danger); }
 .score-red .score-value { color: var(--c-danger); }
+
+@media (max-width: 480px) {
+  .score-label { width: 44px; font-size: 10px; }
+  .score-value { width: 28px; font-size: 11px; }
+}
 </style>

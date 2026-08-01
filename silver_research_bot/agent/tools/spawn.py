@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Agent 用于在后台创建子代理的工具"""
 
 from contextvars import ContextVar
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
     tool_parameters_schema(
         task=StringSchema("The task for the subagent to complete"),
         label=StringSchema("Optional short label for the task (for display)"),
+        role=StringSchema("Optional agent role: paper_reviewer, code_reviewer, literature_review, translator, formula_expert. Leave empty for a general-purpose subagent."),
         required=["task"],
     )
 )
@@ -51,11 +53,12 @@ class SpawnTool(Tool):
             "and use a dedicated subdirectory when helpful."
         )
 
-    async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str:
-        """创建子代理执行给定任务"""
+    async def execute(self, task: str, label: str | None = None, role: str = "", **kwargs: Any) -> str:
+        """创建子代理执行给定任务，可选指定角色"""
         return await self._manager.spawn(
             task=task,
             label=label,
+            role=role,
             origin_channel=self._origin_channel.get(),
             origin_chat_id=self._origin_chat_id.get(),
             session_key=self._session_key.get(),

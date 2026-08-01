@@ -714,3 +714,39 @@ pre { font-size: 12px; background: var(--c-bg-input); color: var(--c-text); padd
 /* AnalysisReport global helpers */
 .ar-wrapper .cc-body table { width: 100%; }
 .ar-wrapper .cc-body img { max-width: 100%; border-radius: var(--r-md); }
+
+/* ── Enhanced table styles (chat + cards + markdown) ── */
+.ar-wrapper .cc-body table,
+.cbubble.agent table,
+.md table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.ar-wrapper .cc-body thead th,
+.cbubble.agent thead th,
+.md thead th {
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--c-info);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ar-wrapper .cc-body tbody tr:nth-child(even),
+.cbubble.agent tbody tr:nth-child(even),
+.md tbody tr:nth-child(even) {
+  background: rgba(99, 102, 241, 0.03);
+}
+.ar-wrapper .cc-body tbody tr:hover,
+.cbubble.agent tbody tr:hover,
+.md tbody tr:hover {
+  background: rgba(99, 102, 241, 0.08);
+}
+.ar-wrapper .cc-body th, .ar-wrapper .cc-body td,
+.cbubble.agent th, .cbubble.agent td,
+.md th, .md td {
+  border: 1px solid var(--c-border);
+  padding: 6px 12px;
+  text-align: left;
+  font-size: 13px;
+  vertical-align: top;
+}

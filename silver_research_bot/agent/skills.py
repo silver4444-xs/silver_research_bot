@@ -1,3 +1,4 @@
+from __future__ import annotations
 """ agent能力的Skill加载器 """
 
 import json

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from silver_research_bot.utils.prompt_templates import render_template
 
@@ -12,15 +13,15 @@ if TYPE_CHECKING:
     from silver_research_bot.providers.base import LLMProvider
 
 
-@dataclass(slots=True)
-class AuditReport:
+class AuditReport(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     paper_id: str
     passed: bool = True
-    issues: list[dict] = field(default_factory=list)
-    checks: dict[str, bool] = field(default_factory=dict)
+    issues: list[dict] = Field(default_factory=list)
+    checks: dict[str, bool] = Field(default_factory=dict)
     overall_grade: str = ""
     overall_score: int = 0
-    dimension_scores: dict = field(default_factory=dict)
+    dimension_scores: dict = Field(default_factory=dict)
     summary: str = ""
 
 

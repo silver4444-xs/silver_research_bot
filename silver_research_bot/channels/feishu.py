@@ -1,3 +1,4 @@
+from __future__ import annotations
 """使用 lark-oapi SDK 并结合 WebSocket 长连接实现 Feishu/Lark 频道。."""
 
 import asyncio
@@ -9,7 +10,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from dataclasses import dataclass
+from pydantic import BaseModel
 from typing import Any, Literal
 
 from lark_oapi.api.im.v1.model import MentionEvent, P2ImMessageReceiveV1
@@ -263,8 +264,7 @@ class FeishuConfig(Base):
 _STREAM_ELEMENT_ID = "streaming_md"
 
 
-@dataclass
-class _FeishuStreamBuf:
+class _FeishuStreamBuf(BaseModel):
     """Per-chat streaming accumulator using CardKit streaming API."""
 
     text: str = ""

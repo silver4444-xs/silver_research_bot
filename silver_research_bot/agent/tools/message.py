@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Agent 用来主动向用户发送消息的工具"""
 
 from contextvars import ContextVar

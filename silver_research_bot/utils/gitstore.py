@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import io
 import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
+from pydantic import BaseModel
 
 
-@dataclass
-class CommitInfo:
+class CommitInfo(BaseModel):
     sha: str  # Short SHA (8 chars)
     message: str
     timestamp: str  # Formatted datetime
@@ -25,8 +24,7 @@ class CommitInfo:
         return f"{header}\n(no file changes)"
 
 
-@dataclass
-class LineAge:
+class LineAge(BaseModel):
     """Age of a single line based on git blame."""
 
     age_days: int  # days since last modification

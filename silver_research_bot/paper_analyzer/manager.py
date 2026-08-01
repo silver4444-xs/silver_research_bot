@@ -62,6 +62,7 @@ class PaperManager:
             "has_translation": getattr(analysis, "translation", None) is not None,
             "artifacts": [a["name"] for a in artifacts],
             "workspace_dir": meta.get("workspace_dir", ""),
+            "content_hash": meta.get("content_hash", ""),
         }
         self._save_index()
 
@@ -147,14 +148,36 @@ class PaperManager:
         fpath = ws_dir / filename
         return fpath.read_text(encoding="utf-8") if fpath.exists() else None
 
+    # 论文 ID 格式: p_ 前缀 + 8 位十六进制字符
+    _PAPER_ID_RE = re.compile(r"^p_[a-f0-9]{8}$")
+
     def delete_paper(self, paper_id: str) -> bool:
-        """删除论文及其所有分析结果。"""
+        """删除论文及其所有分析结果。
+
+        优先从索引中查找并删除；若索引中不存在，则回退到文件系统扫描
+        （处理索引损坏或手动清理后磁盘残留目录的情况）。
+        """
         entry = self._index.pop(paper_id, None)
-        if not entry:
+
+        if entry:
+            ws_dir = Path(entry.get("workspace_dir", ""))
+            if ws_dir.exists():
+                shutil.rmtree(ws_dir, ignore_errors=True)
+            self._save_index()
+            return True
+
+        # Fallback: paper not in index but directory exists on disk.
+        # Validate paper_id format and resolve path to prevent traversal.
+        if not self._PAPER_ID_RE.match(paper_id):
             return False
-        ws_dir = Path(entry.get("workspace_dir", ""))
-        if ws_dir.exists():
-            shutil.rmtree(ws_dir, ignore_errors=True)
+
+        fs_dir = (self.papers_dir / paper_id).resolve()
+        papers_root = self.papers_dir.resolve()
+        if not fs_dir.is_relative_to(papers_root) or not fs_dir.is_dir():
+            return False
+
+        logger.info(f"[delete] Paper '{paper_id}' not in index, removing from filesystem")
+        shutil.rmtree(fs_dir, ignore_errors=True)
         self._save_index()
         return True
 

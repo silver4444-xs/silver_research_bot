@@ -8,6 +8,7 @@ Groq Whisper：使用 Groq 平台托管的 Whisper 模型（whisper-large-v3）�
 两个类的设计模式相同，便于上层代码互换使用。
 """
 
+from __future__ import annotations
 import os
 from pathlib import Path
 

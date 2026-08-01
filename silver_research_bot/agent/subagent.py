@@ -1,19 +1,23 @@
+from __future__ import annotations
 """后台任务执行的子代理管理器"""
 
 import asyncio
 import json
 import time
 import uuid
-from dataclasses import dataclass, field
+from pydantic import BaseModel, ConfigDict, Field
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from silver_research_bot.agent.comm import AgentCommBus, AgentMessage
 from silver_research_bot.agent.hook import AgentHook, AgentHookContext
+from silver_research_bot.agent.role_factory import RoleFactory, RoleSpec
 from silver_research_bot.utils.prompt_templates import render_template
 from silver_research_bot.agent.runner import AgentRunSpec, AgentRunner
 from silver_research_bot.agent.skills import BUILTIN_SKILLS_DIR
+from silver_research_bot.agent.tools.base import Tool
 from silver_research_bot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from silver_research_bot.agent.tools.registry import ToolRegistry
 from silver_research_bot.agent.tools.search import GlobTool, GrepTool
@@ -25,9 +29,9 @@ from silver_research_bot.config.schema import ExecToolConfig, WebToolsConfig
 from silver_research_bot.providers.base import LLMProvider
 
 
-@dataclass(slots=True)
-class SubagentStatus:
+class SubagentStatus(BaseModel):
     """子代理实时状态."""
+    model_config = ConfigDict(extra='forbid')
     task_id: str
     '唯一标识符'
     label: str
@@ -40,9 +44,9 @@ class SubagentStatus:
     '当前阶段（initializing, awaiting_tools, tools_completed, final_response, done, error）'
     iteration: int = 0
     '已执行的迭代次数（ReAct 轮数）'
-    tool_events: list = field(default_factory=list)
+    tool_events: list = Field(default_factory=list)
     '工具调用事件列表'
-    usage: dict = field(default_factory=dict)
+    usage: dict = Field(default_factory=dict)
     '累计 token 使用量'
     stop_reason: str | None = None
     '结束原因（如 completed, max_iterations, tool_error）'
@@ -120,21 +124,35 @@ class SubagentManager:
         '子任务状态字典'
         self._session_tasks: dict[str, set[str]] = {}
         '会话关联的任务ID集合字典'
+        self._task_futures: dict[str, asyncio.Future] = {}
+        'per-task Future，用于 spawn_and_wait 阻塞等待'
+        self._comm_bus = AgentCommBus()
+        'Agent 间通信总线，管理 per-task 消息队列'
 
     async def spawn(
         self,
         task: str,
         label: str | None = None,
+        role: str = "",
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         session_key: str | None = None,
     ) -> str:
-        """创建子代理在后台执行任务"""
+        """创建子代理在后台执行任务，可选指定角色"""
         '''1.生成任务短 ID（8 字符）'''
         task_id = str(uuid.uuid4())[:8]
 
-        '''2.创建状态对象并存储'''
-        display_label = label or task[:30] + ("..." if len(task) > 30 else "")
+        '''2.解析角色（如果指定）'''
+        role_spec: RoleSpec | None = None
+        if role:
+            try:
+                role_spec = RoleFactory.build(role)
+            except ValueError as e:
+                return f"Error: {e}"
+
+        '''3.创建状态对象并存储'''
+        role_prefix = f"[{role}] " if role else ""
+        display_label = role_prefix + (label or task[:30] + ("..." if len(task) > 30 else ""))
         origin = {"channel": origin_channel, "chat_id": origin_chat_id, "session_key": session_key}
 
         status = SubagentStatus(
@@ -145,19 +163,26 @@ class SubagentManager:
         )
         self._task_statuses[task_id] = status
 
-        '''3.创建后台任务执行 _run_subagent'''
+        '''4.注册 Agent 间通信队列'''
+        self._comm_bus.register(task_id)
+
+        '''5.创建后台任务执行 _run_subagent'''
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin, status)
+            self._run_subagent(task_id, task, display_label, origin, status, role_spec=role_spec)
         )
         self._running_tasks[task_id] = bg_task
-        '''4.记录 _session_tasks 以便后续按会话取消'''
+        '''6.记录 _session_tasks 以便后续按会话取消'''
         if session_key:
             self._session_tasks.setdefault(session_key, set()).add(task_id)
 
-        '''5.添加完成回调自动清理'''
+        '''7.添加完成回调自动清理'''
         def _cleanup(_: asyncio.Task) -> None:
             self._running_tasks.pop(task_id, None)
             self._task_statuses.pop(task_id, None)
+            self._comm_bus.unregister(task_id)
+            fut = self._task_futures.pop(task_id, None)
+            if fut and not fut.done():
+                fut.set_exception(RuntimeError(f"Subagent {task_id} cleaned up before completion"))
             if session_key and (ids := self._session_tasks.get(session_key)):
                 ids.discard(task_id)
                 if not ids:
@@ -165,9 +190,42 @@ class SubagentManager:
 
         bg_task.add_done_callback(_cleanup)
 
-        '''6.立即返回确认信息（非阻塞）'''
-        logger.info("Spawned subagent [{}]: {}", task_id, display_label)
+        '''7.立即返回确认信息（非阻塞）'''
+        logger.info("Spawned subagent [{}]: {} (role={})", task_id, display_label, role or "none")
         return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
+
+    async def spawn_and_wait(
+        self,
+        task: str,
+        label: str | None = None,
+        role: str = "",
+        origin_channel: str = "cli",
+        origin_chat_id: str = "direct",
+        session_key: str | None = None,
+        timeout: float = 600,
+    ) -> dict:
+        """spawn 子代理并等待其完成，返回 {task_id, status, result}。"""
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+
+        # fire-and-forget spawn, then capture the future
+        result_str = await self.spawn(
+            task=task, label=label, role=role,
+            origin_channel=origin_channel, origin_chat_id=origin_chat_id,
+            session_key=session_key,
+        )
+        # Extract task_id from the response string
+        task_id = ""
+        if "(id: " in result_str:
+            task_id = result_str.split("(id: ")[1].rstrip(").")
+        if task_id:
+            self._task_futures[task_id] = future
+
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        except asyncio.TimeoutError:
+            self._task_futures.pop(task_id, None)
+            return {"task_id": task_id, "status": "timeout", "result": f"Task timed out after {timeout}s"}
 
     async def _run_subagent(
         self,
@@ -176,94 +234,135 @@ class SubagentManager:
         label: str,
         origin: dict[str, str],
         status: SubagentStatus,
+        *,
+        role_spec: RoleSpec | None = None,
     ) -> None:
-        """执行子代理任务并报告结果."""
-        logger.info("Subagent [{}] starting task: {}", task_id, label)
+        """执行子代理任务并报告结果，可选根据角色定制工具集和提示."""
+        logger.info("Subagent [{}] starting task: {} (role={})", task_id, label, role_spec.name if role_spec else "none")
 
         async def _on_checkpoint(payload: dict) -> None:
             status.phase = payload.get("phase", status.phase)
             status.iteration = payload.get("iteration", status.iteration)
 
         try:
-            '''
-            1.构建子代理工具集
-            限制子代理的工具集：没有 MessageTool 和 SpawnTool，
-            只提供文件操作、搜索、Web、Shell 等基本工具。这样避免了子代理再创建子代理（嵌套）
-            '''
-            # Build subagent tools (no message tool, no spawn tool)
+            # Build subagent tools. If a role is specified, restrict to role.allowed_tools.
+            # Always exclude message/spawn/cron/my to prevent nesting and privilege escalation.
+            _FORBIDDEN = frozenset({"message", "spawn", "cron", "my"})
             tools = ToolRegistry()
-            allowed_dir = self.workspace if (self.restrict_to_workspace or self.exec_config.sandbox) else None
-            extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
-            tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
-            tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(GlobTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(GrepTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            if self.exec_config.enable:
-                tools.register(ExecTool(
-                    working_dir=str(self.workspace),
-                    timeout=self.exec_config.timeout,
-                    restrict_to_workspace=self.restrict_to_workspace,
-                    sandbox=self.exec_config.sandbox,
-                    path_append=self.exec_config.path_append,
-                    allowed_env_keys=self.exec_config.allowed_env_keys,
-                ))
-            if self.web_config.enable:
-                tools.register(WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy))
-                tools.register(WebFetchTool(proxy=self.web_config.proxy))
+            available = self._build_default_subagent_tools()
+            if role_spec is not None:
+                for tool_name in role_spec.tools:
+                    if tool_name in _FORBIDDEN:
+                        continue
+                    if tool_name in available:
+                        tools.register(available[tool_name])
+                    else:
+                        logger.warning(
+                            "Role '{}' requested unknown tool '{}', skipping",
+                            role_spec.name, tool_name,
+                        )
+            else:
+                for tool_name, tool in available.items():
+                    if tool_name not in _FORBIDDEN:
+                        tools.register(tool)
+            logger.info("Subagent [{}] registered {} tools", task_id, len(tools))
 
-            '''3.构建系统提示（_build_subagent_prompt）：包含时间上下文、工作区信息、技能列表等'''
-            system_prompt = self._build_subagent_prompt()
+            # Build system prompt: role-specific or generic
+            if role_spec is not None:
+                system_prompt = role_spec.system_prompt
+            else:
+                system_prompt = self._build_subagent_prompt()
 
-            '''4.构建消息列表'''
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task},
             ]
 
-            '''5.使用 AgentRunner.run 执行，并传入自定义钩子 _SubagentHook 和检查点回调，以便更新状态'''
+            # Apply role-specific temperature and iteration limit
+            temperature = role_spec.temperature if role_spec else None
+            max_iter = 10 if role_spec else 15
+
+            # Inter-agent message injection callback
+            async def _drain_agent_messages(*, limit: int = 3) -> list[dict[str, Any]]:
+                queue = self._comm_bus.get_queue(task_id)
+                if queue is None:
+                    return []
+                items: list[dict[str, Any]] = []
+                for _ in range(limit):
+                    try:
+                        am = queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    prefix = f"[来自 {am.from_agent}]" if am.from_agent else ""
+                    if am.type == "review_request":
+                        prefix += " [审查请求]"
+                    elif am.type == "handoff":
+                        prefix += " [任务转交]"
+                    content = f"{prefix} {am.subject}\n\n{json.dumps(am.payload, ensure_ascii=False)}"
+                    items.append({"role": "user", "content": content[:4000]})
+                return items
+
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=messages,
                 tools=tools,
                 model=self.model,
-                max_iterations=15,
+                max_iterations=max_iter,
                 max_tool_result_chars=self.max_tool_result_chars,
+                temperature=temperature,
                 hook=_SubagentHook(task_id, status),
                 max_iterations_message="Task completed but no final response was generated.",
                 error_message=None,
                 fail_on_tool_error=True,
                 checkpoint_callback=_on_checkpoint,
+                injection_callback=_drain_agent_messages,
             ))
             status.phase = "done"
             status.stop_reason = result.stop_reason
 
             '''6.根据停止原因处理结果'''
-            # 6.1 tool_error：提取部分进度并作为错误返回
+            # 6.1 tool_error
             if result.stop_reason == "tool_error":
                 status.tool_events = list(result.tool_events)
-                await self._announce_result(
-                    task_id, label, task,
-                    self._format_partial_progress(result),
-                    origin, "error",
-                )
-            # 6.2 error：直接返回错误消息
+                final_result = self._format_partial_progress(result)
+                announce_status = "error"
+            # 6.2 error
             elif result.stop_reason == "error":
-                await self._announce_result(
-                    task_id, label, task,
-                    result.error or "Error: subagent execution failed.",
-                    origin, "error",
-                )
-            # 6.3 其他（正常完成）：返回最终内容
+                final_result = result.error or "Error: subagent execution failed."
+                announce_status = "error"
+            # 6.3 normal completion
             else:
-                final_result = result.final_content or "Task completed but no final response was generated."
+                raw = result.final_content or "Task completed but no final response was generated."
+                _MAX_SUBAGENT_RESULT = 4000
+                if len(raw) > _MAX_SUBAGENT_RESULT:
+                    half = _MAX_SUBAGENT_RESULT // 2
+                    final_result = (
+                        raw[:half]
+                        + f"\n\n...(结果已截断，总长度 {len(raw)} 字符)...\n\n"
+                        + raw[-half:]
+                    )
+                    logger.info(
+                        "Subagent [{}] result truncated: {} -> {} chars",
+                        task_id, len(raw), len(final_result),
+                    )
+                else:
+                    final_result = raw
+                announce_status = "ok"
                 logger.info("Subagent [{}] completed successfully", task_id)
-                await self._announce_result(task_id, label, task, final_result, origin, "ok")
+
+            # Resolve future for spawn_and_wait
+            fut = self._task_futures.get(task_id)
+            if fut and not fut.done():
+                fut.set_result({"task_id": task_id, "status": announce_status, "result": final_result})
+
+            await self._announce_result(task_id, label, task, final_result, origin, announce_status)
 
         except Exception as e:
             status.phase = "error"
             status.error = str(e)
             logger.error("Subagent [{}] failed: {}", task_id, e)
+            fut = self._task_futures.get(task_id)
+            if fut and not fut.done():
+                fut.set_exception(e)
             await self._announce_result(task_id, label, task, f"Error: {e}", origin, "error")
 
     async def _announce_result(
@@ -334,6 +433,38 @@ class SubagentManager:
             lines.append("Failure:")
             lines.append(f"- {result.error}")
         return "\n".join(lines) or (result.error or "Error: subagent execution failed.")
+
+    def _build_default_subagent_tools(self) -> dict[str, Tool]:
+        """构建子代理可用工具的工厂字典（按 tool.name 索引）。调用方可按角色筛选。"""
+        allowed_dir = self.workspace if (self.restrict_to_workspace or self.exec_config.sandbox) else None
+        extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
+        tools: dict[str, Tool] = {}
+        for t in (
+            ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read),
+            WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir),
+            EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir),
+            ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir),
+            GlobTool(workspace=self.workspace, allowed_dir=allowed_dir),
+            GrepTool(workspace=self.workspace, allowed_dir=allowed_dir),
+        ):
+            tools[t.name] = t
+        if self.exec_config.enable:
+            et = ExecTool(
+                working_dir=str(self.workspace),
+                timeout=self.exec_config.timeout,
+                restrict_to_workspace=self.restrict_to_workspace,
+                sandbox=self.exec_config.sandbox,
+                path_append=self.exec_config.path_append,
+                allowed_env_keys=self.exec_config.allowed_env_keys,
+            )
+            tools[et.name] = et
+        if self.web_config.enable:
+            for t in (
+                WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy),
+                WebFetchTool(proxy=self.web_config.proxy),
+            ):
+                tools[t.name] = t
+        return tools
 
     def _build_subagent_prompt(self) -> str:
         """

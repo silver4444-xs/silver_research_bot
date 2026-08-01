@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
@@ -1025,8 +1026,10 @@ def extract_paper_meta(file_path: str | Path, workspace: str | Path) -> dict[str
     dest = paper_dir / "original.pdf"
     if dest != path.resolve():
         dest.write_bytes(path.read_bytes())
+    content_hash = hashlib.sha256(dest.read_bytes()).hexdigest()
 
     extracted = extract_pdf_text(path, output_dir=paper_dir)
+    extracted["content_hash"] = content_hash
     full_text = extracted.get("full_text", "")
     language = _detect_language(full_text)
     lines = [l.strip() for l in full_text[:800].split("\n") if l.strip()]
@@ -1043,7 +1046,8 @@ def extract_paper_meta(file_path: str | Path, workspace: str | Path) -> dict[str
             "figure_count": extracted.get("figure_count", 0),
             "table_count": extracted.get("table_count", 0),
             "sections": extracted.get("sections", []), "full_text": full_text,
-            "file_path": str(dest), "workspace_dir": str(paper_dir)}
+            "file_path": str(dest), "workspace_dir": str(paper_dir),
+            "content_hash": content_hash}
 
 
 def _extract_text_paper(path: Path, paper_id: str, workspace: str | Path) -> dict[str, Any]:
@@ -1080,12 +1084,14 @@ def _extract_text_paper(path: Path, paper_id: str, workspace: str | Path) -> dic
     paper_dir = ws / "papers" / paper_id
     paper_dir.mkdir(parents=True, exist_ok=True)
     (paper_dir / "original.txt").write_text(full_text, encoding="utf-8")
+    content_hash = hashlib.sha256(full_text.encode("utf-8")).hexdigest()
 
     extracted = {"pages": [], "sections": sections, "formulas": formulas,
                  "figures": [], "tables": [],
                  "full_text": full_text, "page_count": page_count,
                  "formula_count": len(formulas),
-                 "figure_count": 0, "table_count": 0}
+                 "figure_count": 0, "table_count": 0,
+                 "content_hash": content_hash}
     (paper_dir / "extracted.json").write_text(
         json.dumps(extracted, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -1093,4 +1099,5 @@ def _extract_text_paper(path: Path, paper_id: str, workspace: str | Path) -> dic
             "page_count": page_count, "formula_count": len(formulas),
             "sections": sections, "full_text": full_text,
             "file_path": str(paper_dir / "original.txt"),
-            "workspace_dir": str(paper_dir)}
+            "workspace_dir": str(paper_dir),
+            "content_hash": content_hash}

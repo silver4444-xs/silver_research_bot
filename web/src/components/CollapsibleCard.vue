@@ -39,7 +39,7 @@ function toggle() {
   border: 1px solid var(--c-border);
   border-radius: var(--r-md);
   margin-bottom: var(--s-2);
-  background: rgba(10, 11, 31, 0.25);
+  background: rgba(0, 0, 0, 0.18);
   transition: border-color var(--t-fast), background var(--t-fast);
 }
 .cc-card:hover {
@@ -118,5 +118,11 @@ function toggle() {
 @keyframes cc-fadein {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 480px) {
+  .cc-header { padding: var(--s-2) var(--s-3); }
+  .cc-body { padding: 0 var(--s-3) var(--s-3); }
+  .cc-preview { display: none; }
 }
 </style>

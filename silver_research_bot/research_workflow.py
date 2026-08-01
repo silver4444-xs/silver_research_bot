@@ -5,14 +5,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
 
-@dataclass
-class ResearchArtifact:
+
+class ResearchArtifact(BaseModel):
     """单个科研产物。"""
 
     name: str
@@ -20,26 +20,24 @@ class ResearchArtifact:
     kind: str
 
 
-@dataclass
-class ResearchAuditEvent:
+class ResearchAuditEvent(BaseModel):
     """审计事件。"""
 
     stage: str
     message: str
     timestamp: str
-    payload: dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass
-class ResearchRunSummary:
+class ResearchRunSummary(BaseModel):
     """研究运行摘要。"""
 
     run_id: str
     topic: str
     workspace: str
     status: str
-    artifacts: list[ResearchArtifact] = field(default_factory=list)
-    metrics: dict[str, Any] = field(default_factory=dict)
+    artifacts: list[ResearchArtifact] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
 
 
 def utc_now() -> str:

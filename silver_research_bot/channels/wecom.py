@@ -1,3 +1,4 @@
+from __future__ import annotations
 """WeCom (Enterprise WeChat) channel implementation using wecom_aibot_sdk."""
 
 import asyncio

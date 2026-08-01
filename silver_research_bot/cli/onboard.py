@@ -1,8 +1,8 @@
+from __future__ import annotations
 """silver_research_bot.的交互式问答"""
 
 import json
 import types
-from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Literal, NamedTuple, get_args, get_origin
 
@@ -27,8 +27,7 @@ from silver_research_bot.config.schema import Config
 console = Console()
 
 
-@dataclass
-class OnboardResult:
+class OnboardResult(BaseModel):
     """Result of an onboarding session."""
 
     config: Config

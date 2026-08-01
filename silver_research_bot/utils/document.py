@@ -1,5 +1,7 @@
 """适用于 silver_research_bot 的文档文本提取工具."""
 
+from __future__ import annotations
+
 import mimetypes
 from pathlib import Path
 

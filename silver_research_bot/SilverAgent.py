@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from silver_research_bot.agent.hook import AgentHook
 from silver_research_bot.agent.loop import AgentLoop
 from silver_research_bot.bus.queue import MessageBus
 
 
-@dataclass(slots=True)
-class RunResult:
+class RunResult(BaseModel):
     """单次调用 Agent 的返回结果"""
+    model_config = ConfigDict(extra='forbid')
     content: str
     '执行结果/响应内容文本'
     tools_used: list[str]

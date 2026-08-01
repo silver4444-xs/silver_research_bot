@@ -18,7 +18,7 @@ import json
 import re
 import threading
 import time
-from dataclasses import dataclass
+from pydantic import BaseModel
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 
@@ -60,8 +60,7 @@ class MSTeamsConfig(Base):
     validate_inbound_auth: bool = True
 
 
-@dataclass
-class ConversationRef:
+class ConversationRef(BaseModel):
     """Minimal stored conversation reference for replies."""
 
     service_url: str

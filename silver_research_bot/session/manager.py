@@ -1,32 +1,33 @@
 """对话历史记录的会话管理"""
 
+from __future__ import annotations
+
 import json
 import os
 import shutil
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from silver_research_bot.config.paths import get_legacy_sessions_dir
 from silver_research_bot.utils.helpers import ensure_dir, find_legal_message_start, safe_filename
 
 
-@dataclass
-class Session:
+class Session(BaseModel):
     """一个交谈会话"""
 
     key: str
     '会话唯一标识，格式为 channel:chat_id'
-    messages: list[dict[str, Any]] = field(default_factory=list)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
     '会话消息列表，存储对话内容'
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=datetime.now)
     '会话创建时间'
-    updated_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
     '会话最后更新时间'
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     '会话元数据，存储额外自定义信息'
     last_consolidated: int = 0
     '已持久化/归档的消息数量'
@@ -298,6 +299,15 @@ class SessionManager:
 
         self._cache[session.key] = session
 
+    def update_metadata(self, key: str, metadata: dict[str, Any]) -> Session | None:
+        """更新会话元数据并保存。返回更新后的 Session 或 None。"""
+        session = self.get_or_create(key)
+        if session is not None:
+            session.metadata.update(metadata)
+            session.updated_at = datetime.now()
+            self.save(session)
+        return session
+
     def invalidate(self, key: str) -> None:
         """从内存缓存中移除一个会话。"""
         self._cache.pop(key, None)
@@ -373,18 +383,40 @@ class SessionManager:
         for path in self.sessions_dir.glob("*.jsonl"):
             fallback_key = path.stem.replace("_", ":", 1)
             try:
-                # Read just the metadata line
                 with open(path, encoding="utf-8") as f:
                     first_line = f.readline().strip()
                     if first_line:
                         data = json.loads(first_line)
                         if data.get("_type") == "metadata":
                             key = data.get("key") or path.stem.replace("_", ":", 1)
+                            title = (data.get("metadata") or {}).get("title")
+                            # Read second line for preview
+                            preview = None
+                            message_count = 0
+                            for line in f:
+                                message_count += 1
+                                if preview is None and line.strip():
+                                    try:
+                                        msg = json.loads(line)
+                                        if msg.get("role") == "user":
+                                            content = msg.get("content", "")
+                                            if isinstance(content, list):
+                                                content = " ".join(
+                                                    c.get("text", "") for c in content
+                                                    if isinstance(c, dict) and c.get("type") == "text"
+                                                )
+                                            if content:
+                                                preview = str(content)[:60]
+                                    except (json.JSONDecodeError, KeyError):
+                                        pass
                             sessions.append({
                                 "key": key,
                                 "created_at": data.get("created_at"),
                                 "updated_at": data.get("updated_at"),
-                                "path": str(path)
+                                "path": str(path),
+                                "title": title,
+                                "preview": preview,
+                                "message_count": message_count,
                             })
             except Exception:
                 repaired = self._repair(fallback_key)
@@ -393,7 +425,10 @@ class SessionManager:
                         "key": repaired.key,
                         "created_at": repaired.created_at.isoformat(),
                         "updated_at": repaired.updated_at.isoformat(),
-                        "path": str(path)
+                        "path": str(path),
+                        "title": repaired.metadata.get("title") if repaired.metadata else None,
+                        "preview": None,
+                        "message_count": len(repaired.messages),
                     })
                 continue
 

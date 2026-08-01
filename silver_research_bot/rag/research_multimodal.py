@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from silver_research_bot.research_rag import PaperChunk
+from silver_research_bot.rag.research_rag import PaperChunk
 
 
 class MultimodalIndexer:

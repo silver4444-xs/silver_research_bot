@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 import re as _re
-from dataclasses import dataclass, field as _field
+from pydantic import BaseModel
 
 _META_TAG_RE = _re.compile(
     r"<!--\s*uid:(?P<uid>\S+)\s+imp:(?P<imp>\d+)\s+"
@@ -37,8 +37,7 @@ _META_TAG_RE = _re.compile(
 )
 
 
-@dataclass
-class MemoryEntry:
+class MemoryEntry(BaseModel):
     """单条长期记忆，附重要性评分、时间戳和访问追踪。"""
 
     uid: str
@@ -315,15 +314,22 @@ class MemoryStore:
 
     # -- history.jsonl — append-only, JSONL format ---------------------------
 
-    def append_history(self, entry: str) -> int:
+    def append_history(
+        self, entry: str, *,
+        source: str = "consolidation",
+        reliability: str = "high",
+    ) -> int:
         """
         追加历史条目
         -生成下一个自增 cursor（通过 _next_cursor()）
         -生成当前时间戳（格式 YYYY-MM-DD HH:MM）。
         -关键净化：调用 strip_think(entry) 去除 <think> 标签和模板泄漏字符（如未闭合的 <think 前缀）。若原内容非空但净化后为空，仍然写入空字符串（防止再次污染）。
-        -将 {"cursor": ..., "timestamp": ..., "content": content} 以 JSON 格式追加到 history.jsonl（每行一个 JSON）。
+        -将 {"cursor": ..., "timestamp": ..., "content": ..., "source": ..., "reliability": ...} 以 JSON 格式追加到 history.jsonl。
         -更新 .cursor 文件为新游标值。
         -返回游标。
+
+        source: 条目来源 — "consolidation" (LLM摘要), "raw_archive" (降级归档), "dream" (Dream提取)
+        reliability: 可靠性 — "high" (正常摘要), "low" (降级归档), "unknown" (未标记)
         """
         cursor = self._next_cursor()
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -335,10 +341,25 @@ class MemoryStore:
                 "persisting empty content to avoid re-polluting context",
                 cursor,
             )
-        record = {"cursor": cursor, "timestamp": ts, "content": content}
+        record = {
+            "cursor": cursor, "timestamp": ts, "content": content,
+            "source": source, "reliability": reliability,
+        }
         with open(self.history_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
         self._cursor_file.write_text(str(cursor), encoding="utf-8")
+
+        # Lightweight compaction: trim if over threshold (was only in Dream.run)
+        if self.max_history_entries > 0:
+            entries = self._read_entries()
+            if len(entries) > self.max_history_entries:
+                kept = entries[-self.max_history_entries:]
+                self._write_entries(kept)
+                logger.debug(
+                    "history.jsonl compacted: {} → {} entries",
+                    len(entries), len(kept),
+                )
+
         return cursor
 
     @staticmethod
@@ -470,10 +491,13 @@ class MemoryStore:
 
     def raw_archive(self, messages: list[dict]) -> None:
         """当正常的记忆合并（consolidation）失败或退化时（例如 LLM 不可用、摘要生成出错），
-        作为后备方案，将原始消息列表以纯文本形式直接追加到历史文件（history.jsonl）中，而不是丢弃它们"""
+        作为后备方案，将原始消息列表以纯文本形式直接追加到历史文件（history.jsonl）中，而不是丢弃它们。
+        标记 source="raw_archive" 和 reliability="low" 以便下游（Dream、ContextBuilder）过滤或降权。"""
         self.append_history(
             f"[RAW] {len(messages)} messages\n"
-            f"{self._format_messages(messages)}"
+            f"{self._format_messages(messages)}",
+            source="raw_archive",
+            reliability="low",
         )
         logger.warning(
             "Memory consolidation degraded: raw-archived {} messages", len(messages)
@@ -800,7 +824,9 @@ class Consolidator:
                     source,
                     len(chunk),
                 )
-                summary = await self.archive(chunk)
+                from silver_research_bot.utils.langsmith_utils import trace_memory_op
+                with trace_memory_op("archive", chunk_size=len(chunk)):
+                    summary = await self.archive(chunk)
                 if summary:
                     last_summary = summary
                 else:
@@ -855,7 +881,10 @@ class Dream:
         max_iterations: int = 10,
         max_tool_result_chars: int = 16_000,
         annotate_line_ages: bool = True,
+        enabled: bool = True,
     ):
+        self.enabled = enabled
+        '是否启用 Dream（paper_memory_mode 下为 False）'
         self.store = store
         '存储实例'
         self.provider = provider
@@ -979,28 +1008,37 @@ class Dream:
         return result
 
     async def run(self) -> bool:
-        """
-        处理未处理的历史记录条目。如果处理成功，则返回 True
-        步骤：
-        1.获取上次处理游标 last_cursor，读取未处理的历史记录。
-        2.若无新记录，返回 False。
-        3.取前 max_batch_size 条记录，构建 history_text。
-        4.读取当前 MEMORY.md、SOUL.md、USER.md 内容，对 MEMORY.md 进行年龄标注（如果启用）。
-        5.Phase 1：用系统提示模板 agent/dream_phase1.md 分析 history_text + 文件内容，得到分析结果 analysis。
-        6.Phase 2：
-            - 构建 Phase 2 的系统提示（agent/dream_phase2.md，其中包含 skill_creator_path 引用）。
-            - 用户消息 = analysis + 文件内容 + 已有技能列表（若存在）。
-            - 调用 self._runner.run(AgentRunSpec) 执行，允许使用的工具为 read_file, edit_file, write_file（限制写入 skills 目录）。
-        7.从 result.tool_events 提取生成变更日志 changelog。
-        8.无论 Phase 2 成功与否，都更新 dream cursor 到当前批次的最后一条游标，并调用 store.compact_history() 压缩历史（保留最近 1000 条）。
-        9.若产生变更且 Git 已初始化，提交 commit，commit message 包含时间戳和变更数量。
-        10.返回 True 表示处理了记录
-        """
+        """处理未处理的历史记录条目。如果处理成功，则返回 True"""
+        if not self.enabled:
+            return False
         from silver_research_bot.agent.skills import BUILTIN_SKILLS_DIR
 
         last_cursor = self.store.get_last_dream_cursor()
         entries = self.store.read_unprocessed_history(since_cursor=last_cursor)
         if not entries:
+            return False
+
+        # Filter out raw_archive entries (degraded consolidation dumps) to
+        # prevent memory contamination. Raw dumps contain unsummarized
+        # conversation including assistant tool outputs and internal reasoning
+        # that should not be analyzed for memory extraction.
+        raw_count = len(entries)
+        _last_raw_cursor = entries[-1]["cursor"]  # save before filtering
+        entries = [
+            e for e in entries
+            if e.get("source") != "raw_archive"
+            and not str(e.get("content", "")).startswith("[RAW]")
+        ]
+        filtered_out = raw_count - len(entries)
+        if filtered_out:
+            logger.info(
+                "Dream: filtered out {} raw_archive entry(s) from batch, {} remaining",
+                filtered_out, len(entries),
+            )
+        if not entries:
+            # Still advance cursor past filtered entries so stale raw dumps
+            # are not re-read on every Dream cycle.
+            self.store.set_last_dream_cursor(_last_raw_cursor)
             return False
 
         batch = entries[: self.max_batch_size]
@@ -1012,6 +1050,17 @@ class Dream:
         # Build history text for LLM
         history_text = "\n".join(
             f"[{e['timestamp']}] {e['content']}" for e in batch
+        )
+
+        # Role guidance: remind the Dream LLM to only extract memories from
+        # user-originated facts and preferences, not from the assistant's own
+        # reasoning, tool outputs, or self-generated conclusions.  This prevents
+        # the agent from treating its own statements as persistent memories.
+        history_text = (
+            "注意：以下历史记录来自对话归档。请只从用户(User)陈述的事实、偏好和"
+            "问题中提取记忆。不要将助手(Assistant)的推理过程、分析结论、工具调用"
+            "结果或自行得出的判断固化为长期记忆。仅用户明确表达的信息应被记忆。\n\n"
+            + history_text
         )
 
         # Current file contents + per-line age annotations (MEMORY.md only)

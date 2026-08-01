@@ -33,14 +33,14 @@ class TestPipeline:
 
 class TestBM25:
     def test_bm25_search(self):
-        from silver_research_bot.research_bm25 import BM25Scorer
+        from silver_research_bot.rag import BM25Scorer
         bm25 = BM25Scorer()
         bm25.fit([("d1", "neural network deep learning"), ("d2", "database SQL query")])
         results = bm25.search("neural network", top_k=3)
         assert results[0][0] == "d1"
 
     def test_bm25_add_remove(self):
-        from silver_research_bot.research_bm25 import BM25Scorer
+        from silver_research_bot.rag import BM25Scorer
         bm25 = BM25Scorer()
         bm25.add("x1", "test doc"); bm25.add("x2", "another doc")
         assert bm25.doc_count == 2
@@ -51,7 +51,7 @@ class TestBM25:
 class TestVectorStore:
     def test_add_search(self, tmp_path):
         import numpy as np
-        from silver_research_bot.research_vector_store import VectorStore
+        from silver_research_bot.rag import VectorStore
         store = VectorStore(tmp_path, dim=4)
         vecs = [np.random.randn(4).astype(np.float32).tolist() for _ in range(5)]
         ids = [f"c{i}" for i in range(5)]
@@ -61,7 +61,7 @@ class TestVectorStore:
         assert results[0][0] == ids[0]
 
     def test_tombstones(self, tmp_path):
-        from silver_research_bot.research_vector_store import VectorStore
+        from silver_research_bot.rag import VectorStore
         store = VectorStore(tmp_path, dim=4)
         store.add([[1.0, 0, 0, 0]], ["c1"])
         store.remove(["c1"])

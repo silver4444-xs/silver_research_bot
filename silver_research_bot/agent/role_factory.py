@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from pydantic import BaseModel, Field
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,7 @@ ROLE_TEMPLATES: dict[str, dict[str, Any]] = {
             "3. 性能优化机会\n4. 代码风格和可维护性\n"
             "直接输出结构化审查报告。"
         ),
-        "tools": ["read_file", "grep", "glob", "shell"],
+        "tools": ["read_file", "grep", "glob", "exec"],
         "temperature": 0.1,
     },
     "literature_review": {
@@ -65,12 +65,11 @@ ROLE_TEMPLATES: dict[str, dict[str, Any]] = {
 }
 
 
-@dataclass
-class RoleSpec:
+class RoleSpec(BaseModel):
     name: str
     label: str
     system_prompt: str
-    tools: list[str] = field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
     temperature: float = 0.1
 
 

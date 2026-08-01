@@ -1,5 +1,7 @@
 """动态工具管理的工具注册表"""
 
+from __future__ import annotations
+
 from typing import Any
 
 from silver_research_bot.agent.tools.base import Tool

@@ -33,6 +33,8 @@ class PaperOrchestrator:
         self.model = model
         self.workspace = Path(workspace)
         self._manager = None
+        self._on_analysis_complete: "Callable[[str], None] | None" = None
+        '分析完成回调，参数为 paper_id'
 
     def set_manager(self, manager) -> None:
         self._manager = manager
@@ -255,16 +257,44 @@ class PaperOrchestrator:
                 has_translation=analysis.translation is not None)
         analysis.completed_at = _utc_now()
 
-        # Build key_findings: collect up to 3 meaningful sentences from four-dim analysis
+        # Build key_findings: collect up to 3 meaningful sentences from four-dim analysis.
+        # Prefer sentences containing signal words (findings/claims) over raw first-lines.
+        _FINDING_SIGNALS = [
+            "提出", "证明", "表明", "发现", "贡献", "本文", "我们",
+            "实验", "实现", "达到", "验证", "揭示", "阐述", "构建",
+            "propose", "show", "demonstrate", "achieve", "result",
+            "contribution", "experiment", "present", "introduce",
+        ]
         key_findings = []
         for dim_key in ["system_model", "problem_formulation", "optimization_algorithm"]:
             dim_text = dim_results.get(dim_key, "")
-            if dim_text and len(dim_text) > 100:
-                first_line = dim_text.strip().split("\n")[0]
-                if len(first_line) > 20:
-                    key_findings.append(first_line[:120])
-                    if len(key_findings) >= 3:
+            if not dim_text or len(dim_text) < 100:
+                continue
+            # Split into non-empty, non-heading lines
+            lines = [
+                ln.strip() for ln in dim_text.split("\n")
+                if ln.strip() and not ln.strip().startswith("#")
+            ]
+            if not lines:
+                continue
+            # Prefer a line containing a signal word
+            chosen = None
+            for ln in lines:
+                if len(ln) < 15:
+                    continue
+                if any(sig in ln for sig in _FINDING_SIGNALS):
+                    chosen = ln
+                    break
+            # Fallback: first substantive line
+            if not chosen:
+                for ln in lines:
+                    if len(ln) >= 20:
+                        chosen = ln
                         break
+            if chosen:
+                key_findings.append(chosen[:150])
+            if len(key_findings) >= 3:
+                break
 
         (paper_dir / "analysis_summary.json").write_text(
             json.dumps({
@@ -278,6 +308,13 @@ class PaperOrchestrator:
             encoding="utf-8",
         )
         _save_plan(plan, paper_dir)
+
+        # Notify external observers (e.g., PaperKnowledgeIndex incremental update)
+        if self._on_analysis_complete:
+            try:
+                self._on_analysis_complete(meta_dict["paper_id"])
+            except Exception:
+                logger.exception("analysis_complete callback failed")
 
         if self._manager:
             self._manager.register_paper(meta_dict, analysis, artifacts)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
-from dataclasses import dataclass, field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from datetime import datetime
 from typing import Any
 
@@ -40,8 +40,7 @@ CURSOR_SAVE_DEBOUNCE_S = 0.5
 # Data classes
 # ---------------------------------------------------------------------------
 
-@dataclass
-class MochatBufferedEntry:
+class MochatBufferedEntry(BaseModel):
     """Buffered inbound entry for delayed dispatch."""
     raw_body: str
     author: str
@@ -52,16 +51,19 @@ class MochatBufferedEntry:
     group_id: str = ""
 
 
-@dataclass
-class DelayState:
+class DelayState(BaseModel):
     """Per-target delayed message state."""
-    entries: list[MochatBufferedEntry] = field(default_factory=list)
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    entries: list[MochatBufferedEntry] = Field(default_factory=list)
     timer: asyncio.Task | None = None
+    _lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        return self._lock
 
 
-@dataclass
-class MochatTarget:
+class MochatTarget(BaseModel):
     """Outbound target resolution result."""
     id: str
     is_panel: bool

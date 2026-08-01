@@ -155,3 +155,137 @@ def trace_eval_result(evaluator_name: str, score: float, comment: str = "", meta
         run.post()
     except Exception as e:
         logger.debug(f"LangSmith eval trace failed: {e}")
+
+
+@contextmanager
+def trace_agent_turn(
+    session_key: str = "",
+    user_message: str = "",
+):
+    """Agent 单次对话的根 Trace。包裹整个 ReAct 执行。"""
+    if not _check_langsmith():
+        yield None
+        return
+    import langsmith
+    started_at = datetime.now(timezone.utc)
+    run: Any = None
+    try:
+        run = langsmith.RunTree(
+            name="agent.turn",
+            run_type="chain",
+            inputs={"session": session_key, "message": user_message[:200]},
+            project_name=_project_name(),
+        )
+        yield run
+    except Exception:
+        yield None
+    finally:
+        if run is not None:
+            try:
+                run.end_time = datetime.now(timezone.utc)
+                run.metadata["latency_ms"] = (
+                    run.end_time - started_at
+                ).total_seconds() * 1000
+                run.post()
+            except Exception as e:
+                logger.debug(f"LangSmith agent.turn run.post() failed: {e}")
+
+
+@contextmanager
+def trace_tool_call(tool_name: str, args_summary: str = ""):
+    """单个工具调用的 Span。run_type="tool"，自动挂到父 Trace 下。"""
+    if not _check_langsmith():
+        yield None
+        return
+    import langsmith
+    started_at = datetime.now(timezone.utc)
+    run: Any = None
+    try:
+        parent = langsmith.get_current_run_tree()
+        run = langsmith.RunTree(
+            name=f"tool.{tool_name}",
+            run_type="tool",
+            inputs={"tool": tool_name, "args": args_summary[:200]},
+            parent_run=parent,
+            project_name=_project_name(),
+        )
+        yield run
+    except Exception:
+        yield None
+    finally:
+        if run is not None:
+            try:
+                run.end_time = datetime.now(timezone.utc)
+                run.metadata["duration_ms"] = (
+                    run.end_time - started_at
+                ).total_seconds() * 1000
+                run.post()
+            except Exception as e:
+                logger.debug(f"LangSmith tool run.post() failed: {e}")
+
+
+@contextmanager
+def trace_governance(msg_before: int, msg_after: int):
+    """上下文治理 Span。run_type="chain"。"""
+    if not _check_langsmith():
+        yield None
+        return
+    import langsmith
+    started_at = datetime.now(timezone.utc)
+    run: Any = None
+    try:
+        parent = langsmith.get_current_run_tree()
+        run = langsmith.RunTree(
+            name="governance",
+            run_type="chain",
+            inputs={"msg_before": msg_before, "msg_after": msg_after},
+            outputs={"reduction": msg_before - msg_after},
+            parent_run=parent,
+            project_name=_project_name(),
+        )
+        yield run
+    except Exception:
+        yield None
+    finally:
+        if run is not None:
+            try:
+                run.end_time = datetime.now(timezone.utc)
+                run.metadata["latency_ms"] = (
+                    run.end_time - started_at
+                ).total_seconds() * 1000
+                run.post()
+            except Exception as e:
+                logger.debug(f"LangSmith governance run.post() failed: {e}")
+
+
+@contextmanager
+def trace_memory_op(op_name: str, **inputs: Any):
+    """记忆操作 Span（Consolidator / Dream / retrieval）。"""
+    if not _check_langsmith():
+        yield None
+        return
+    import langsmith
+    started_at = datetime.now(timezone.utc)
+    run: Any = None
+    try:
+        parent = langsmith.get_current_run_tree()
+        run = langsmith.RunTree(
+            name=f"memory.{op_name}",
+            run_type="chain",
+            inputs=inputs,
+            parent_run=parent,
+            project_name=_project_name(),
+        )
+        yield run
+    except Exception:
+        yield None
+    finally:
+        if run is not None:
+            try:
+                run.end_time = datetime.now(timezone.utc)
+                run.metadata["latency_ms"] = (
+                    run.end_time - started_at
+                ).total_seconds() * 1000
+                run.post()
+            except Exception as e:
+                logger.debug(f"LangSmith memory run.post() failed: {e}")

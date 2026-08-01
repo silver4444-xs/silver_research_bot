@@ -1,3 +1,4 @@
+from __future__ import annotations
 """WhatsApp channel implementation using Node.js bridge."""
 
 import asyncio

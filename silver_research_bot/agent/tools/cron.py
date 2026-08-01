@@ -1,3 +1,4 @@
+from __future__ import annotations
 """用于安排提醒和任务的Cron工具。"""
 
 from contextvars import ContextVar

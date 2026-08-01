@@ -1,3 +1,4 @@
+from __future__ import annotations
 """silver_research_bot.的 CLI命令"""
 
 import asyncio
@@ -701,13 +702,47 @@ def _run_gateway(
         disabled_skills=config.agents.defaults.disabled_skills,
         session_ttl_minutes=config.agents.defaults.session_ttl_minutes,
         tools_config=config.tools,
+        paper_memory_mode=config.agents.defaults.memory.paper_memory_mode,
     )
+
+    # Paper memory mode: create PaperKnowledgeIndex and attach to context
+    if config.agents.defaults.memory.paper_memory_mode:
+        from silver_research_bot.rag.research_embedder import EmbeddingEngine
+        from silver_research_bot.agent.paper_knowledge import PaperKnowledgeIndex
+        embedder = EmbeddingEngine(
+            provider=provider,
+            model="text-embedding-3-small",
+            dim=1536,
+        )
+        paper_knowledge = PaperKnowledgeIndex(
+            papers_dir=config.workspace_path / "papers",
+            embedder=embedder,
+            cache_dir=agent.context.memory.memory_dir / "paper_embeddings",
+        )
+        agent.context.paper_knowledge = paper_knowledge
+        # 补全 ResearchContextTracker 的 paper_knowledge 引用
+        if agent.research_tracker:
+            agent.research_tracker.paper_knowledge = paper_knowledge
+        # 创建 ActiveMemoryRetriever（复用同一个 embedder）
+        mem_cfg = config.agents.defaults.memory
+        if agent.active_memory_retriever is None and mem_cfg.active_retrieval_enabled:
+            from silver_research_bot.agent.memory_retrieval import ActiveMemoryRetriever
+            agent.active_memory_retriever = ActiveMemoryRetriever(
+                memory_store=agent.context.memory,
+                embedder=embedder,
+                config=mem_cfg,
+            )
+            console.print("[green]Active Memory Retriever:[/green] initialized")
+        console.print("[green]Paper Knowledge Index:[/green] initialized")
 
     # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
         # Dream is an internal job — run directly, not through the agent loop.
         if job.name == "dream":
+            if not agent.dream or not agent.dream.enabled:
+                logger.warning("Dream job triggered but Dream is disabled (paper_memory_mode)")
+                return None
             try:
                 await agent.dream.run()
                 logger.info("Dream cron job completed")
@@ -883,21 +918,24 @@ def _run_gateway(
         console.print(f"[green]✓[/green] Health endpoint: http://{host}:{health_port}/health")
         async with server:
             await server.serve_forever()
-    # Register Dream system job (always-on, idempotent on restart)
-    dream_cfg = config.agents.defaults.dream
-    if dream_cfg.model_override:
-        agent.dream.model = dream_cfg.model_override
-    agent.dream.max_batch_size = dream_cfg.max_batch_size
-    agent.dream.max_iterations = dream_cfg.max_iterations
-    agent.dream.annotate_line_ages = dream_cfg.annotate_line_ages
-    from silver_research_bot.cron.types import CronJob, CronPayload
-    cron.register_system_job(CronJob(
-        id="dream",
-        name="dream",
-        schedule=dream_cfg.build_schedule(config.agents.defaults.timezone),
-        payload=CronPayload(kind="system_event"),
-    ))
-    console.print(f"[green]✓[/green] Dream: {dream_cfg.describe_schedule()}")
+    # Register Dream system job (only in general-agent mode)
+    if config.agents.defaults.memory.dream_enabled:
+        dream_cfg = config.agents.defaults.dream
+        if dream_cfg.model_override:
+            agent.dream.model = dream_cfg.model_override
+        agent.dream.max_batch_size = dream_cfg.max_batch_size
+        agent.dream.max_iterations = dream_cfg.max_iterations
+        agent.dream.annotate_line_ages = dream_cfg.annotate_line_ages
+        from silver_research_bot.cron.types import CronJob, CronPayload
+        cron.register_system_job(CronJob(
+            id="dream",
+            name="dream",
+            schedule=dream_cfg.build_schedule(config.agents.defaults.timezone),
+            payload=CronPayload(kind="system_event"),
+        ))
+        console.print(f"[green]✓[/green] Dream: {dream_cfg.describe_schedule()}")
+    else:
+        console.print("[dim]✓[/dim] Dream: disabled (paper_memory_mode)")
 
     async def _open_browser_when_ready() -> None:
         """Wait for the gateway to bind, then point the user's browser at the webui."""
@@ -1076,6 +1114,7 @@ def agent(
         disabled_skills=config.agents.defaults.disabled_skills,
         session_ttl_minutes=config.agents.defaults.session_ttl_minutes,
         tools_config=config.tools,
+        paper_memory_mode=config.agents.defaults.memory.paper_memory_mode,
     )
     restart_notice = consume_restart_notice_from_env()
     if restart_notice and should_show_cli_restart_notice(restart_notice, session_id):

@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from silver_research_bot import __version__
 from silver_research_bot.research_core import ResearchCore
-from silver_research_bot.research_rag import ResearchRAG
+from silver_research_bot.rag import ResearchRAG
 from silver_research_bot.paper_analyzer.manager import PaperManager
 from silver_research_bot.paper_analyzer.orchestrator import PaperOrchestrator
 
@@ -42,6 +42,10 @@ class BatchRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     run_id: str | None = None
+
+
+class StopRequest(BaseModel):
+    run_id: str = "default"
 
 
 class PaperIngestRequest(BaseModel):
@@ -114,6 +118,20 @@ async def _get_agent_loop() -> "AgentLoop":
             return _agent_loop  # type: ignore[return-value]
         from silver_research_bot.SilverAgent import silver_research_bot
         bot = silver_research_bot.from_config()
+        # Inject paper analysis dependencies so Agent can trigger and read analyses
+        bot._loop._paper_manager = _paper_manager
+        bot._loop._paper_orchestrator = _get_orchestrator()
+        from silver_research_bot.paper_analyzer.tools import (
+            AnalyzePaperTool, ComparePapersTool, ListPapersTool, ReadPaperArtifactTool,
+        )
+        bot._loop.tools.register(AnalyzePaperTool(orchestrator=bot._loop._paper_orchestrator))
+        bot._loop.tools.register(ComparePapersTool(
+            manager=_paper_manager,
+            provider=bot._loop.provider,
+            model=bot._loop.model,
+        ))
+        bot._loop.tools.register(ListPapersTool(manager=_paper_manager))
+        bot._loop.tools.register(ReadPaperArtifactTool(manager=_paper_manager))
         _agent_loop = bot._loop
         _agent_initialized = True
         return _agent_loop
@@ -308,6 +326,14 @@ async def chat(request: ChatRequest) -> dict[str, Any]:
     return {"reply": content}
 
 
+@app.post("/api/agent/chat/stop")
+async def stop_chat(request: StopRequest) -> dict[str, Any]:
+    loop = await _get_agent_loop()
+    session_key = f"web:{request.run_id or 'default'}"
+    cancelled = await loop.cancel_web_session(session_key)
+    return {"status": "cancelled", "session_key": session_key, "task_count": cancelled}
+
+
 @app.post("/api/agent/chat/stream")
 async def chat_stream(request: ChatRequest):
     loop = await _get_agent_loop()
@@ -316,10 +342,21 @@ async def chat_stream(request: ChatRequest):
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
     async def on_stream(token: str) -> None:
-        await queue.put(token)
+        await queue.put(json.dumps({"type": "token", "text": token}, ensure_ascii=False))
 
     async def on_stream_end(**kwargs: Any) -> None:
-        await queue.put(None)
+        if not kwargs.get("resuming"):
+            await queue.put(None)
+
+    async def on_event(payload: str) -> None:
+        try:
+            evt = json.loads(payload)
+            if evt.get("type") == "tool_progress":
+                logger.info("SSE event → queue: type={} stage={} msg={}",
+                            evt.get("type"), evt.get("stage", ""), evt.get("message", "")[:50])
+        except Exception:
+            pass
+        await queue.put(payload)
 
     async def _run() -> None:
         try:
@@ -330,19 +367,24 @@ async def chat_stream(request: ChatRequest):
                 chat_id=request.run_id or "default",
                 on_stream=on_stream,
                 on_stream_end=on_stream_end,
+                on_event=on_event,
             )
+        except asyncio.CancelledError:
+            pass
         except Exception:
             logger.exception("Agent stream error for session {}", session_key)
+        finally:
             await queue.put(None)
 
     async def event_generator():
         task = asyncio.create_task(_run())
+        loop.register_web_task(session_key, task)
         try:
             while True:
-                token = await queue.get()
-                if token is None:
+                item = await queue.get()
+                if item is None:
                     break
-                yield f"data: {json.dumps({'token': token})}\n\n"
+                yield f"data: {item}\n\n"
         finally:
             if not task.done():
                 task.cancel()
@@ -383,6 +425,96 @@ async def delete_agent_session(session_id: str) -> dict[str, Any]:
     if not loop.sessions.delete_session(key):
         raise HTTPException(status_code=404, detail="session not found")
     return {"status": "deleted", "session_id": session_id}
+
+
+class UpdateSessionRequest(BaseModel):
+    title: str | None = None
+
+
+@app.patch("/api/agent/sessions/{session_id}")
+async def update_agent_session(session_id: str, request: UpdateSessionRequest) -> dict[str, Any]:
+    loop = await _get_agent_loop()
+    key = f"web:{session_id}"
+    metadata = {}
+    if request.title is not None:
+        metadata["title"] = request.title
+    if not metadata:
+        raise HTTPException(status_code=400, detail="no fields to update")
+    session = loop.sessions.update_metadata(key, metadata)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return {"session_id": session_id, "metadata": session.metadata}
+
+
+class GenerateTitleRequest(BaseModel):
+    force: bool = False
+
+
+async def _generate_session_title(loop: "AgentLoop", first_message: str) -> str:
+    """Generate a short Chinese title from the first user message via LLM."""
+    try:
+        response = await loop.provider.chat(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是一个会话标题生成器。根据用户的第一条消息，生成一个简短的中文标题（8-15个字）。"
+                        "直接输出标题，不要加引号、标点或任何解释。"
+                    ),
+                },
+                {"role": "user", "content": f"用户消息: {first_message}"},
+            ],
+            model=loop.model,
+            max_tokens=50,
+            temperature=0.3,
+            tools=None,
+        )
+        title = (response.content or "").strip().strip("'\"《》「」")
+        if title and 2 <= len(title) <= 40:
+            return title
+    except Exception:
+        logger.exception("Failed to generate session title via LLM")
+
+    clean = first_message.strip().replace("\n", " ")
+    return clean[:30] + ("..." if len(clean) > 30 else "")
+
+
+@app.post("/api/agent/sessions/{session_id}/title")
+async def generate_session_title(session_id: str, request: GenerateTitleRequest = GenerateTitleRequest()):
+    loop = await _get_agent_loop()
+    key = f"web:{session_id}"
+
+    data = loop.sessions.read_session_file(key)
+    if data is None:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    existing_title = (data.get("metadata") or {}).get("title")
+    if existing_title and not request.force:
+        return {"session_id": session_id, "title": existing_title, "generated": False}
+
+    first_user_msg = ""
+    for msg in data.get("messages", []):
+        if msg.get("role") == "user" and msg.get("content"):
+            content = msg["content"]
+            if isinstance(content, str):
+                first_user_msg = content
+            elif isinstance(content, list):
+                first_user_msg = " ".join(
+                    c.get("text", "") for c in content
+                    if isinstance(c, dict) and c.get("type") == "text"
+                )
+            break
+
+    if not first_user_msg.strip():
+        raise HTTPException(status_code=400, detail="no user message found in session")
+
+    title = await _generate_session_title(loop, first_user_msg[:500])
+
+    session = loop.sessions.get_or_create(key)
+    session.metadata["title"] = title
+    loop.sessions.save(session)
+
+    return {"session_id": session_id, "title": title, "generated": True}
 
 
 # ── Paper Analysis API ────────────────────────────────────────────
@@ -437,7 +569,8 @@ class PaperCompareRequest(BaseModel):
 
 
 @app.post("/api/paper/upload")
-async def paper_upload(file: UploadFile, language: str = "auto"):
+async def paper_upload(file: UploadFile, language: str = "auto", mode: str = "full"):
+    """上传论文。mode=full 后台自动分析；mode=extract_only 仅提取并返回路径供 Agent 工具调用。"""
     suffix = Path(file.filename or "paper.pdf").suffix.lower()
     if suffix not in (".pdf", ".txt", ".md"):
         raise HTTPException(status_code=400, detail="仅支持 PDF / TXT / MD 文件")
@@ -446,34 +579,101 @@ async def paper_upload(file: UploadFile, language: str = "auto"):
         tmp.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_bytes(await file.read())
         orch = _get_orchestrator()
-        # Stage 0: extract metadata immediately, start full analysis in background
         from silver_research_bot.paper_analyzer.extractor import extract_paper_meta
         meta = extract_paper_meta(str(tmp), orch.workspace)
         paper_dir = Path(meta["workspace_dir"])
-        orch._write_progress(paper_dir, "parse", "completed",
+        content_hash = meta.get("content_hash", "")
+
+        # ——— Dedup check: search existing papers by content hash ———
+        existing = None
+        if content_hash:
+            # 1) Search in-memory index
+            for pid, entry in _paper_manager._index.items():
+                if entry.get("content_hash") == content_hash:
+                    existing = entry
+                    break
+            # 2) Fallback: scan filesystem for papers not in index
+            if existing is None and _paper_manager.papers_dir.exists():
+                for d in _paper_manager.papers_dir.iterdir():
+                    if not d.is_dir():
+                        continue
+                    ef = d / "extracted.json"
+                    if not ef.exists():
+                        continue
+                    try:
+                        ex = json.loads(ef.read_text(encoding="utf-8"))
+                    except Exception:
+                        continue
+                    if ex.get("content_hash") == content_hash:
+                        existing = {
+                            "paper_id": d.name,
+                            "title": ex.get("title", meta["title"]),
+                            "language": ex.get("language", meta["language"]),
+                            "status": _paper_manager._index.get(d.name, {}).get("status", "extracted"),
+                            "workspace_dir": str(d),
+                        }
+                        break
+
+        if existing:
+            # Clean up the duplicate workspace we just created
+            import shutil as _shutil
+            if paper_dir.is_dir():
+                _shutil.rmtree(paper_dir, ignore_errors=True)
+            workspace_pdf = str(Path(existing["workspace_dir"]) / "original.pdf")
+            if existing.get("status") in ("completed", "processing"):
+                return {
+                    "paper_id": existing["paper_id"],
+                    "title": existing.get("title", meta["title"]),
+                    "language": existing.get("language", meta["language"]),
+                    "status": "already_analyzed" if existing.get("status") == "completed" else "processing",
+                    "duplicate": True,
+                    "workspace_pdf_path": workspace_pdf,
+                    "workspace_dir": existing.get("workspace_dir", ""),
+                }
+            # extracted but not yet analyzed — reuse existing paper_id
+            return {
+                "paper_id": existing["paper_id"],
+                "title": existing.get("title", meta["title"]),
+                "language": existing.get("language", meta["language"]),
+                "status": "extracted",
+                "duplicate": True,
+                "workspace_pdf_path": workspace_pdf,
+                "workspace_dir": existing.get("workspace_dir", ""),
+            }
+        # ——— End dedup check ———
+
+        await orch._write_progress(paper_dir, "parse", "completed",
             f"文档解析完成，{meta['page_count']}页，{meta['formula_count']}个公式")
+        status = "extracted" if mode == "extract_only" else "processing"
         _paper_manager._index[meta["paper_id"]] = {
             "paper_id": meta["paper_id"], "title": meta["title"],
             "language": meta["language"], "page_count": meta["page_count"],
-            "formula_count": meta["formula_count"], "status": "processing",
+            "formula_count": meta["formula_count"], "status": status,
             "uploaded_at": meta.get("uploaded_at", ""),
             "workspace_dir": str(paper_dir),
+            "content_hash": content_hash,
         }
         _paper_manager._save_index()
-        # Launch full analysis in background
+        workspace_pdf = str(paper_dir / "original.pdf")
+        if mode == "extract_only":
+            return {"paper_id": meta["paper_id"], "title": meta["title"],
+                    "language": meta["language"], "status": "extracted",
+                    "workspace_pdf_path": workspace_pdf,
+                    "workspace_dir": str(paper_dir)}
+        # Launch full analysis in background (default mode)
         async def _run():
             try:
                 await orch.analyze_paper(str(tmp), language, paper_meta=meta)
             except Exception as e:
                 logger.exception(f"Paper analysis failed for {meta['paper_id']}: {e}")
-                paper_dir = Path(meta.get("workspace_dir", ""))
                 if paper_dir.is_dir():
                     paper_dir.joinpath("progress.json").write_text(
                         __import__("json").dumps({"stage":"error","status":"failed","message":str(e)[:200]}, ensure_ascii=False),
                         encoding="utf-8")
         asyncio.create_task(_run())
         return {"paper_id": meta["paper_id"], "title": meta["title"],
-                "language": meta["language"], "status": "processing"}
+                "language": meta["language"], "status": "processing",
+                "workspace_pdf_path": workspace_pdf}
     except Exception as exc:
         logger.exception("论文上传失败")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -545,6 +745,29 @@ def paper_get(paper_id: str):
     if not paper:
         raise HTTPException(status_code=404, detail="论文未找到")
     return paper
+
+
+@app.get("/api/paper/{paper_id}/summary")
+def paper_analysis_summary(paper_id: str):
+    """返回论文分析的结构化摘要，供前端 AnalysisReport 组件使用。
+
+    数据来源于 workspace 中的 extracted.json / review_scores.json /
+    audit_report.json / analysis_summary.json，与 SSE analysis_complete
+    事件的数据结构完全一致，用于会话历史恢复和去重路径的场景。
+    """
+    from silver_research_bot.paper_analyzer.tools import build_analysis_summary
+
+    paper_dir = _paper_manager.papers_dir / paper_id
+    if not paper_dir.is_dir():
+        entry = _paper_manager._index.get(paper_id)
+        if entry:
+            paper_dir = Path(entry.get("workspace_dir", ""))
+    if not paper_dir.is_dir():
+        raise HTTPException(status_code=404, detail="论文未找到")
+    try:
+        return build_analysis_summary(paper_dir, paper_id)
+    except Exception:
+        raise HTTPException(status_code=500, detail="无法读取分析摘要")
 
 
 @app.get("/api/paper/{paper_id}/export")

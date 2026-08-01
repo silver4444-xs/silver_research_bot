@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from silver_research_bot.providers.base import LLMProvider
@@ -20,8 +21,7 @@ CONFLICT_PROMPT = """比较以下两条信息的关系（仅输出一个词）�
 新信息: {new_text}"""
 
 
-@dataclass
-class Conflict:
+class Conflict(BaseModel):
     existing_uid: str
     existing_text: str
     new_text: str
@@ -29,8 +29,7 @@ class Conflict:
     resolution: str = ""  # "replace" | "merge" | "keep_new" | "keep_old" | "ignore"
 
 
-@dataclass
-class MemoryAction:
+class MemoryAction(BaseModel):
     action: str  # "replace" | "merge" | "keep_new" | "keep_old" | "ignore"
     target_uid: str | None = None
     new_text: str | None = None
@@ -40,9 +39,11 @@ class MemoryAction:
 class MemoryConflictDetector:
     """新记忆写入时检测与已有记忆的语义冲突。"""
 
-    def __init__(self, provider: "LLMProvider", model: str | None = None):
+    def __init__(self, provider: "LLMProvider", model: str | None = None, academic_mode: bool = True):
         self.provider = provider
         self.model = model
+        self.academic_mode = academic_mode
+        '学术模式：矛盾结论保留双方而非自动删除（paper_memory_mode 下为 True）'
 
     async def detect(
         self, new_text: str, existing: list["MemoryEntry"]
@@ -91,6 +92,8 @@ class MemoryConflictDetector:
         if conflict.conflict_type == "update":
             return "replace"
         if conflict.conflict_type == "contradiction":
+            if self.academic_mode:
+                return "keep_both"  # 学术场景：不同结论都有价值
             return "keep_old" if existing_importance >= 8 else "replace"
         return "ignore"
 

@@ -1,23 +1,21 @@
 """用于斜杠命令的简易命令路由表。"""
 
-from __future__ import annotations
+from typing import Any, Awaitable, Callable, Optional
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from pydantic import BaseModel, ConfigDict
 
-if TYPE_CHECKING:
-    from silver_research_bot.bus.events import InboundMessage, OutboundMessage
-    from silver_research_bot.session.manager import Session
+from silver_research_bot.bus.events import InboundMessage, OutboundMessage
+from silver_research_bot.session.manager import Session
 
-Handler = Callable[["CommandContext"], Awaitable["OutboundMessage | None"]]
+Handler = Callable[["CommandContext"], Awaitable[Optional[OutboundMessage]]]
 
 
-@dataclass
-class CommandContext:
+class CommandContext(BaseModel):
     """Everything a command handler needs to produce a response."""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     msg: InboundMessage
-    session: Session | None
+    session: Optional[Session]
     key: str
     raw: str
     args: str = ""
@@ -57,14 +55,14 @@ class CommandRouter:
     def is_priority(self, text: str) -> bool:
         return text.strip().lower() in self._priority
 
-    async def dispatch_priority(self, ctx: CommandContext) -> OutboundMessage | None:
+    async def dispatch_priority(self, ctx: CommandContext) -> Optional[OutboundMessage]:
         """Dispatch a priority command. Called from run() without the lock."""
         handler = self._priority.get(ctx.raw.lower())
         if handler:
             return await handler(ctx)
         return None
 
-    async def dispatch(self, ctx: CommandContext) -> OutboundMessage | None:
+    async def dispatch(self, ctx: CommandContext) -> Optional[OutboundMessage]:
         """Try exact, prefix, then interceptors. Returns None if unhandled."""
         cmd = ctx.raw.lower()
 
