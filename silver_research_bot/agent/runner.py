@@ -431,6 +431,8 @@ class AgentRunner:
             context.usage = dict(raw_usage)
             context.tool_calls = list(response.tool_calls)
             self._accumulate_usage(usage, raw_usage)
+            if response.reasoning_content:
+                await hook.on_reasoning(context, response.reasoning_content)
 
             '''4. 处理工具调用（response.should_execute_tools）'''
             if response.should_execute_tools:

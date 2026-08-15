@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from contextlib import AsyncExitStack, nullcontext
 from pathlib import Path
@@ -58,6 +59,23 @@ if TYPE_CHECKING:
 
 UNIFIED_SESSION_KEY = "unified:default"
 
+_PAPER_MARKER_RE = re.compile(r'^\s*\[(?:已上传论文|已分析论文):[^\n]*\]\s*')
+'论文上传/引用控制标记（前端注入，用于触发 LLM 门控与技能路由）'
+_SYSTEM_REMINDER_PREFIX = "[系统提醒]"
+'内部控制提醒消息前缀（如“请先调用 analyze_paper”），不应作为可见用户消息持久化/展示'
+_EMPTY_USER_FALLBACK = "分析这篇论文"
+'用户消息剥离标记后为空时的占位文本（与前端可见气泡保持一致）'
+
+
+def _strip_paper_marker(content: str) -> str:
+    """剥离用户消息中的论文上传/引用控制标记，返回剩余的真实输入。"""
+    return _PAPER_MARKER_RE.sub("", content).strip()
+
+
+def _is_system_reminder(content: str) -> bool:
+    """判断消息是否为内部控制提醒，这类消息不应作为可见用户消息。"""
+    return content.lstrip().startswith(_SYSTEM_REMINDER_PREFIX)
+
 
 class _LoopHook(AgentHook):
     """Core hook for the main loop."""
@@ -102,6 +120,10 @@ class _LoopHook(AgentHook):
         if self._on_stream_end:
             await self._on_stream_end(resuming=resuming)
         self._stream_buf = ""
+
+    async def on_reasoning(self, context: AgentHookContext, reasoning_content: str) -> None:
+        if reasoning_content and self._on_event:
+            await self._emit_event({"type": "reasoning", "text": reasoning_content})
 
     async def _emit_event(self, payload: dict) -> None:
         if self._on_event:
@@ -1391,10 +1413,17 @@ class AgentLoop:
         '''
         user_persisted_early = False
         if isinstance(msg.content, str) and msg.content.strip():
-            session.add_message("user", msg.content)
-            self._mark_pending_user_turn(session)
-            self.sessions.save(session)
-            user_persisted_early = True
+            # 内部控制消息不持久化为可见用户消息：
+            #   - 系统提醒（如“请先调用 analyze_paper”）仅作为当前轮次的 LLM 指令
+            #   - 论文上传/引用标记从持久化内容中剥离，仅保留用户真实问题
+            if _is_system_reminder(msg.content):
+                pass
+            else:
+                content_to_save = _strip_paper_marker(msg.content) or _EMPTY_USER_FALLBACK
+                session.add_message("user", content_to_save)
+                self._mark_pending_user_turn(session)
+                self.sessions.save(session)
+                user_persisted_early = True
 
         '''
         2.10 运行 Agent 循环
@@ -1692,6 +1721,9 @@ class AgentLoop:
                     if not filtered:
                         continue
                     entry["content"] = filtered
+                # 内部控制提醒（如“请先调用 analyze_paper”）不持久化为可见用户消息
+                if isinstance(entry.get("content"), str) and _is_system_reminder(entry["content"]):
+                    continue
             entry.setdefault("timestamp", datetime.now().isoformat())
             session.messages.append(entry)
         session.updated_at = datetime.now()

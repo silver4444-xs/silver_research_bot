@@ -345,7 +345,9 @@ async def chat_stream(request: ChatRequest):
         await queue.put(json.dumps({"type": "token", "text": token}, ensure_ascii=False))
 
     async def on_stream_end(**kwargs: Any) -> None:
-        if not kwargs.get("resuming"):
+        resuming = bool(kwargs.get("resuming"))
+        await queue.put(json.dumps({"type": "segment_end", "resuming": resuming}, ensure_ascii=False))
+        if not resuming:
             await queue.put(None)
 
     async def on_event(payload: str) -> None:

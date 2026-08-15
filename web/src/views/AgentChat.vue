@@ -76,6 +76,19 @@
           <!-- Structured report: when analysis data is present -->
           <div v-if="m.role === 'agent' && m.analysis" class="ar-wrapper">
             <strong>Agent</strong>
+            <details v-if="m.reasoning || m.thinking" class="think-fold">
+              <summary>💭 思考过程</summary>
+              <div class="think-fold-body">
+                <div v-if="m.thinking" class="think-sec">
+                  <div class="think-sec-label">推理叙述</div>
+                  <div v-html="md.renderFormula(m.thinking)"></div>
+                </div>
+                <div v-if="m.reasoning" class="think-sec">
+                  <div class="think-sec-label">内部思考</div>
+                  <div v-html="md.renderFormula(m.reasoning)"></div>
+                </div>
+              </div>
+            </details>
             <AnalysisReport
               :analysis="m.analysis"
               :content="m.content"
@@ -87,6 +100,19 @@
           <!-- Regular message bubble -->
           <div v-else class="cbubble">
             <strong>{{ m.role === 'user' ? '你' : 'Agent' }}</strong>
+            <details v-if="m.role === 'agent' && (m.reasoning || m.thinking)" class="think-fold">
+              <summary>💭 思考过程</summary>
+              <div class="think-fold-body">
+                <div v-if="m.thinking" class="think-sec">
+                  <div class="think-sec-label">推理叙述</div>
+                  <div v-html="md.renderFormula(m.thinking)"></div>
+                </div>
+                <div v-if="m.reasoning" class="think-sec">
+                  <div class="think-sec-label">内部思考</div>
+                  <div v-html="md.renderFormula(m.reasoning)"></div>
+                </div>
+              </div>
+            </details>
             <div v-if="m.role === 'agent'" v-html="md.renderFormula(m.content)"></div>
             <p v-else>{{ m.content }}</p>
           </div>
@@ -367,7 +393,7 @@ async function doChat(overrideMessage) {
   scrollToBottom()
 
   const agentIdx = chatMsgs.value.length
-  chatMsgs.value.push({ role: 'agent', content: '' })
+  chatMsgs.value.push({ role: 'agent', content: '', reasoning: '', thinking: '' })
   chatLoading.value = true
   toolStatuses.value = []
 
@@ -434,6 +460,23 @@ async function doChat(overrideMessage) {
               case 'analysis_complete':
                 chatMsgs.value[agentIdx].analysis = parsed.summary
                 break
+              case 'reasoning': {
+                const msg = chatMsgs.value[agentIdx]
+                if (!msg.reasoning) msg.reasoning = ''
+                msg.reasoning += parsed.text
+                break
+              }
+              case 'segment_end': {
+                // resuming=true → more tool calls follow, so the content emitted so far is
+                // intermediate "thinking-out-loud" narration, not the final answer.
+                const msg = chatMsgs.value[agentIdx]
+                if (parsed.resuming && msg.content) {
+                  if (!msg.thinking) msg.thinking = ''
+                  msg.thinking += (msg.thinking ? '\n\n' : '') + msg.content
+                  msg.content = ''
+                }
+                break
+              }
               case 'governance':
               case 'injection':
                 break
@@ -513,41 +556,31 @@ function retryMessage(agentMsg, idx) {
 }
 
 function exportChat() {
-  const title = sessionTitle.value || sessionId.value
-  const date = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
-  const lines = ['# ' + title, '', '> 导出日期: ' + date, '']
+  // 定位最终分析报告：取最后一条有实质内容的 agent 消息作为报告正文，
+  // 并从任意携带结构化 analysis 的消息中提取论文名（二者可能不在同一条消息上）。
+  let reportContent = ''
+  let paperTitle = ''
   for (const m of chatMsgs.value) {
-    const role = m.role === 'user' ? '你' : 'Agent'
-    lines.push('## ' + role, '')
-    // Embed structured analysis summary when available
-    if (m.analysis) {
-      const a = m.analysis
-      if (a.scores && Object.keys(a.scores).length) {
-        lines.push('| 评分维度 | 分数 |')
-        lines.push('|----------|------|')
-        for (const [k, v] of Object.entries(a.scores)) {
-          const labels = { theory: '理论视角', engineering: '工程视角', domain: '领域视角', overall: '综合' }
-          lines.push('| ' + (labels[k] || k) + ' | ' + v + '/10 |')
-        }
-        lines.push('')
-      }
-      lines.push('> 审计: ' + (a.audit_passed ? '✅ 通过' : '⚠️ 未通过')
-        + (a.issue_count != null ? ' | ' + a.issue_count + ' 个待改进项' : ''))
-      if (a.key_findings && a.key_findings.length) {
-        lines.push('> **关键发现:**')
-        for (const kf of a.key_findings) lines.push('> - ' + kf)
-      }
-      lines.push('')
-    }
-    lines.push(m.content, '')
+    if (m.role !== 'agent') continue
+    const c = (m.content || '').trim()
+    if (c) reportContent = c
+    if (!paperTitle && m.analysis && m.analysis.title) paperTitle = m.analysis.title.trim()
   }
+  if (!reportContent) return
+
+  const date = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+  const lines = []
+  if (paperTitle) lines.push('# ' + paperTitle, '')
+  lines.push('> 导出日期: ' + date, '', reportContent, '')
+
   const text = lines.join('\n')
+  const base = (paperTitle || sessionTitle.value || '论文分析报告').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 80)
   const blob = new Blob(['﻿' + text], { type: 'text/markdown;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = title.replace(/[\\/:*?"<>|]/g, '_') + '.md'
-  a.click()
-  URL.revokeObjectURL(a.href)
+  const aEl = document.createElement('a')
+  aEl.href = URL.createObjectURL(blob)
+  aEl.download = base + '_分析结果.md'
+  aEl.click()
+  URL.revokeObjectURL(aEl.href)
 }
 
 function clearAttach() {
@@ -660,6 +693,12 @@ function formatTime(iso) {
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
 }
 
+// 剥离用户消息中的论文上传/引用控制标记，返回用户真实输入
+function stripPaperMarker(content) {
+  if (typeof content !== 'string') return content
+  return content.replace(/^\s*\[(?:已上传论文|已分析论文):[^\n]*\]\s*/, '').trim()
+}
+
 async function loadSessionHistory() {
   try {
     const data = await api('/api/agent/sessions/' + sessionId.value)
@@ -708,7 +747,22 @@ async function loadSessionHistory() {
           content = m.content.map(c => c.text || '').join('')
         }
         if (!content) continue
+        // 隐藏内部控制消息（系统提醒 + 论文上传/引用标记），不应出现在聊天记录中
+        if (m.role === 'user') {
+          if (content.trim().startsWith('[系统提醒]')) continue
+          content = stripPaperMarker(content) || '分析这篇论文'
+        }
         const entry = { role: m.role === 'assistant' ? 'agent' : 'user', content }
+        if (m.role === 'assistant') {
+          // Collapse internal chain-of-thought (reasoning_content) into the fold
+          if (m.reasoning_content) entry.reasoning = m.reasoning_content
+          // Intermediate turns (that called tools) are "thinking-out-loud" narration,
+          // not the final answer — collapse them instead of showing as a normal bubble.
+          if (Array.isArray(m.tool_calls) && m.tool_calls.length) {
+            entry.thinking = content
+            entry.content = ''
+          }
+        }
         // Attach structured analysis if this message follows a paper analysis tool
         const paperId = analysisMap.get(i)
         if (paperId) {
@@ -1135,4 +1189,50 @@ onMounted(async () => {
   letter-spacing: 0.08em;
   color: #C084FC;
 }
+
+/* Collapsible thinking fold (推理叙述 + 内部思考) */
+.think-fold {
+  margin: 0 0 var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  background: rgba(99, 102, 241, 0.05);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  font-size: 12px;
+}
+.think-fold summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--c-text-muted);
+  font-weight: 600;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.think-fold summary::-webkit-details-marker { display: none; }
+.think-fold summary::before {
+  content: '▸';
+  display: inline-block;
+  transition: transform 0.15s ease;
+  color: var(--c-text-muted);
+}
+.think-fold[open] summary::before { transform: rotate(90deg); }
+.think-fold-body {
+  margin-top: var(--s-2);
+  padding-top: var(--s-2);
+  border-top: 1px dashed var(--c-border);
+  color: var(--c-text-secondary);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.think-sec { margin-bottom: var(--s-2); }
+.think-sec:last-child { margin-bottom: 0; }
+.think-sec-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--c-text-muted);
+  margin-bottom: 4px;
+}
+.think-sec p { margin: 0; line-height: 1.6; }
 </style>

@@ -44,6 +44,10 @@ class AgentHook:
     async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
         pass
 
+    async def on_reasoning(self, context: AgentHookContext, reasoning_content: str) -> None:
+        """模型本轮输出的思考过程（reasoning_content，如 DeepSeek/Kimi 的 CoT）。"""
+        pass
+
     async def on_tool_start(self, context: AgentHookContext, tool_name: str, args_summary: str) -> None:
         """工具调用开始前触发。args_summary 是参数的简短摘要（≤120 字符）。"""
         pass
@@ -113,6 +117,9 @@ class CompositeHook(AgentHook):
 
     async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
         await self._for_each_hook_safe("on_stream_end", context, resuming=resuming)
+
+    async def on_reasoning(self, context: AgentHookContext, reasoning_content: str) -> None:
+        await self._for_each_hook_safe("on_reasoning", context, reasoning_content)
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
         await self._for_each_hook_safe("before_execute_tools", context)
