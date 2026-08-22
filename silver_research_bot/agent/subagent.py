@@ -54,6 +54,16 @@ class SubagentStatus(BaseModel):
     '错误信息（如果失败）'
 
 
+class SpawnHandle(BaseModel):
+    """spawn() 的结构化返回值，供 spawn_and_wait 直接取 task_id，无需字符串解析。"""
+    task_id: str
+    label: str
+    status: SubagentStatus
+
+    def __str__(self) -> str:
+        return f"Subagent [{self.label}] started (id: {self.task_id}). I'll notify you when it completes."
+
+
 class _SubagentHook(AgentHook):
     """子代理执行钩子——记录工具调用并更新状态。"""
 
@@ -137,7 +147,7 @@ class SubagentManager:
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         session_key: str | None = None,
-    ) -> str:
+    ) -> str | SpawnHandle:
         """创建子代理在后台执行任务，可选指定角色"""
         '''1.生成任务短 ID（8 字符）'''
         task_id = str(uuid.uuid4())[:8]
@@ -192,7 +202,7 @@ class SubagentManager:
 
         '''7.立即返回确认信息（非阻塞）'''
         logger.info("Spawned subagent [{}]: {} (role={})", task_id, display_label, role or "none")
-        return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
+        return SpawnHandle(task_id=task_id, label=display_label, status=status)
 
     async def spawn_and_wait(
         self,

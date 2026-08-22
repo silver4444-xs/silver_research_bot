@@ -55,7 +55,7 @@ class SpawnTool(Tool):
 
     async def execute(self, task: str, label: str | None = None, role: str = "", **kwargs: Any) -> str:
         """创建子代理执行给定任务，可选指定角色"""
-        return await self._manager.spawn(
+        result = await self._manager.spawn(
             task=task,
             label=label,
             role=role,
@@ -63,3 +63,4 @@ class SpawnTool(Tool):
             origin_chat_id=self._origin_chat_id.get(),
             session_key=self._session_key.get(),
         )
+        return result if isinstance(result, str) else str(result)
