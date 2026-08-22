@@ -323,20 +323,40 @@ class SubagentManager:
                     items.append({"role": "user", "content": content[:4000]})
                 return items
 
-            result = await self.runner.run(AgentRunSpec(
-                initial_messages=messages,
-                tools=tools,
-                model=self.model,
-                max_iterations=max_iter,
-                max_tool_result_chars=self.max_tool_result_chars,
-                temperature=temperature,
-                hook=_SubagentHook(task_id, status),
-                max_iterations_message="Task completed but no final response was generated.",
-                error_message=None,
-                fail_on_tool_error=True,
-                checkpoint_callback=_on_checkpoint,
-                injection_callback=_drain_agent_messages,
-            ))
+            from silver_research_bot.utils.langsmith_utils import _check_langsmith
+            if _check_langsmith():
+                from langsmith import run_helpers
+                with run_helpers.trace(f"subagent.{task_id}", run_type="chain",
+                                       inputs={"task": task[:200]}):
+                    result = await self.runner.run(AgentRunSpec(
+                        initial_messages=messages,
+                        tools=tools,
+                        model=self.model,
+                        max_iterations=max_iter,
+                        max_tool_result_chars=self.max_tool_result_chars,
+                        temperature=temperature,
+                        hook=_SubagentHook(task_id, status),
+                        max_iterations_message="Task completed but no final response was generated.",
+                        error_message=None,
+                        fail_on_tool_error=True,
+                        checkpoint_callback=_on_checkpoint,
+                        injection_callback=_drain_agent_messages,
+                    ))
+            else:
+                result = await self.runner.run(AgentRunSpec(
+                    initial_messages=messages,
+                    tools=tools,
+                    model=self.model,
+                    max_iterations=max_iter,
+                    max_tool_result_chars=self.max_tool_result_chars,
+                    temperature=temperature,
+                    hook=_SubagentHook(task_id, status),
+                    max_iterations_message="Task completed but no final response was generated.",
+                    error_message=None,
+                    fail_on_tool_error=True,
+                    checkpoint_callback=_on_checkpoint,
+                    injection_callback=_drain_agent_messages,
+                ))
             status.phase = "done"
             status.stop_reason = result.stop_reason
 

@@ -158,37 +158,22 @@ def trace_eval_result(evaluator_name: str, score: float, comment: str = "", meta
 
 
 @contextmanager
-def trace_agent_turn(
-    session_key: str = "",
-    user_message: str = "",
-):
-    """Agent 单次对话的根 Trace。包裹整个 ReAct 执行。"""
+def trace_agent_turn(session_key: str = "", user_message: str = ""):
+    """Agent 单次对话的根 Trace，并设为 current 以便子调用/子代理挂到其下。"""
     if not _check_langsmith():
         yield None
         return
-    import langsmith
-    started_at = datetime.now(timezone.utc)
-    run: Any = None
+    from langsmith import run_helpers
     try:
-        run = langsmith.RunTree(
-            name="agent.turn",
+        with run_helpers.trace(
+            "agent.turn",
             run_type="chain",
-            inputs={"session": session_key, "message": user_message[:200]},
+            inputs={"session": session_key, "message": (user_message or "")[:200]},
             project_name=_project_name(),
-        )
-        yield run
+        ) as run:
+            yield run
     except Exception:
         yield None
-    finally:
-        if run is not None:
-            try:
-                run.end_time = datetime.now(timezone.utc)
-                run.metadata["latency_ms"] = (
-                    run.end_time - started_at
-                ).total_seconds() * 1000
-                run.post()
-            except Exception as e:
-                logger.debug(f"LangSmith agent.turn run.post() failed: {e}")
 
 
 @contextmanager

@@ -104,3 +104,36 @@ def test_blackboard_owner_rewrite_and_reject(tmp_path):
         e4 = await bb.write("k", "v3", author="b", append=True)
         assert isinstance(e4.value, list)              # append-only
     asyncio.run(go())
+
+
+def test_trace_agent_turn_sets_current_run(monkeypatch):
+    import langsmith.run_helpers as rh
+    from silver_research_bot.utils import langsmith_utils as lu
+
+    captured = {}
+    fake_run = object()
+
+    class _FakeTrace:
+        def __init__(self, *a, **kw):
+            captured["name"] = a[0] if a else None
+            captured["inputs"] = kw.get("inputs")
+        def __enter__(self):
+            captured["entered"] = True
+            return fake_run
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(rh, "trace", _FakeTrace)
+    monkeypatch.setattr(lu, "_check_langsmith", lambda: True)
+
+    with lu.trace_agent_turn(session_key="s", user_message="hi") as run:
+        assert run is fake_run
+    assert captured.get("entered") is True
+    assert captured.get("name") == "agent.turn"
+
+
+def test_trace_agent_turn_no_key_yields_none(monkeypatch):
+    from silver_research_bot.utils import langsmith_utils as lu
+    monkeypatch.setattr(lu, "_check_langsmith", lambda: False)
+    with lu.trace_agent_turn() as run:
+        assert run is None
