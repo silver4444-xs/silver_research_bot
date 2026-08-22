@@ -139,16 +139,18 @@ class SubagentManager:
         self._comm_bus = AgentCommBus()
         'Agent 间通信总线，管理 per-task 消息队列'
 
-    async def spawn(
+    async def _spawn_internal(
         self,
         task: str,
-        label: str | None = None,
-        role: str = "",
-        origin_channel: str = "cli",
-        origin_chat_id: str = "direct",
-        session_key: str | None = None,
+        label: str | None,
+        role: str,
+        origin_channel: str,
+        origin_chat_id: str,
+        session_key: str | None,
+        *,
+        announce: bool,
     ) -> str | SpawnHandle:
-        """创建子代理在后台执行任务，可选指定角色"""
+        """生成子代理后台任务的公共实现；announce=False 时结果仅经 Future 返回，不投递 MessageBus。"""
         '''1.生成任务短 ID（8 字符）'''
         task_id = str(uuid.uuid4())[:8]
 
@@ -178,7 +180,8 @@ class SubagentManager:
 
         '''5.创建后台任务执行 _run_subagent'''
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin, status, role_spec=role_spec)
+            self._run_subagent(task_id, task, display_label, origin, status,
+                               role_spec=role_spec, announce=announce)
         )
         self._running_tasks[task_id] = bg_task
         '''6.记录 _session_tasks 以便后续按会话取消'''
@@ -204,6 +207,19 @@ class SubagentManager:
         logger.info("Spawned subagent [{}]: {} (role={})", task_id, display_label, role or "none")
         return SpawnHandle(task_id=task_id, label=display_label, status=status)
 
+    async def spawn(
+        self,
+        task: str,
+        label: str | None = None,
+        role: str = "",
+        origin_channel: str = "cli",
+        origin_chat_id: str = "direct",
+        session_key: str | None = None,
+    ) -> str | SpawnHandle:
+        """创建子代理在后台执行任务，可选指定角色"""
+        return await self._spawn_internal(task, label, role, origin_channel,
+                                          origin_chat_id, session_key, announce=True)
+
     async def spawn_and_wait(
         self,
         task: str,
@@ -214,28 +230,22 @@ class SubagentManager:
         session_key: str | None = None,
         timeout: float = 600,
     ) -> dict:
-        """spawn 子代理并等待其完成，返回 {task_id, status, result}。"""
+        """spawn 子代理并等待其完成，返回 {task_id, status, result}。结果仅经 Future 返回，不投递 MessageBus。"""
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
 
-        # fire-and-forget spawn, then capture the future
-        result_str = await self.spawn(
-            task=task, label=label, role=role,
-            origin_channel=origin_channel, origin_chat_id=origin_chat_id,
-            session_key=session_key,
-        )
-        # Extract task_id from the response string
-        task_id = ""
-        if "(id: " in result_str:
-            task_id = result_str.split("(id: ")[1].rstrip(").")
-        if task_id:
-            self._task_futures[task_id] = future
+        handle = await self._spawn_internal(task, label, role, origin_channel,
+                                            origin_chat_id, session_key, announce=False)
+        if isinstance(handle, str):  # 非法 role
+            return {"task_id": "", "status": "error", "result": handle}
+        self._task_futures[handle.task_id] = future
 
         try:
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
-            self._task_futures.pop(task_id, None)
-            return {"task_id": task_id, "status": "timeout", "result": f"Task timed out after {timeout}s"}
+            self._task_futures.pop(handle.task_id, None)
+            return {"task_id": handle.task_id, "status": "timeout",
+                    "result": f"Task timed out after {timeout}s"}
 
     async def _run_subagent(
         self,
@@ -246,6 +256,7 @@ class SubagentManager:
         status: SubagentStatus,
         *,
         role_spec: RoleSpec | None = None,
+        announce: bool = True,
     ) -> None:
         """执行子代理任务并报告结果，可选根据角色定制工具集和提示."""
         logger.info("Subagent [{}] starting task: {} (role={})", task_id, label, role_spec.name if role_spec else "none")
@@ -364,7 +375,8 @@ class SubagentManager:
             if fut and not fut.done():
                 fut.set_result({"task_id": task_id, "status": announce_status, "result": final_result})
 
-            await self._announce_result(task_id, label, task, final_result, origin, announce_status)
+            if announce:
+                await self._announce_result(task_id, label, task, final_result, origin, announce_status)
 
         except Exception as e:
             status.phase = "error"
@@ -373,7 +385,8 @@ class SubagentManager:
             fut = self._task_futures.get(task_id)
             if fut and not fut.done():
                 fut.set_exception(e)
-            await self._announce_result(task_id, label, task, f"Error: {e}", origin, "error")
+            if announce:
+                await self._announce_result(task_id, label, task, f"Error: {e}", origin, "error")
 
     async def _announce_result(
         self,
