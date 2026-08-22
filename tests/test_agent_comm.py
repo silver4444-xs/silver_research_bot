@@ -137,3 +137,9 @@ def test_trace_agent_turn_no_key_yields_none(monkeypatch):
     monkeypatch.setattr(lu, "_check_langsmith", lambda: False)
     with lu.trace_agent_turn() as run:
         assert run is None
+
+
+def test_paper_team_deleted():
+    import importlib.util
+    spec = importlib.util.find_spec("silver_research_bot.agent.paper_team")
+    assert spec is None, "paper_team.py 应已删除"
