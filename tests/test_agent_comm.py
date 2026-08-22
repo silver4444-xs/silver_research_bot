@@ -63,3 +63,29 @@ def test_spawn_and_wait_does_not_announce(tmp_path):
         assert res["result"] == "hello result"
         assert published == []  # 不再走 MessageBus 注入
     asyncio.run(go())
+
+
+def test_comm_bus_full_queue_returns_zero():
+    from silver_research_bot.agent.comm import AgentCommBus, AgentMessage
+
+    async def go():
+        bus = AgentCommBus()
+        bus.register("a")
+        q = bus.get_queue("a")
+        for i in range(20):  # 塞满 maxsize=20 的队列
+            await q.put(AgentMessage(from_agent="x", to_agent="a", subject=str(i)))
+        sent = await bus.send(AgentMessage(from_agent="b", to_agent="a", subject="overflow"), timeout=0.05)
+        assert sent == 0
+    asyncio.run(go())
+
+
+def test_comm_bus_message_log_bounded():
+    from silver_research_bot.agent.comm import AgentCommBus, AgentMessage
+
+    async def go():
+        bus = AgentCommBus(max_log=3)
+        bus.register("a")
+        for i in range(5):
+            await bus.send(AgentMessage(from_agent="b", to_agent="a", subject=str(i)))
+        assert len(bus._message_log) == 3
+    asyncio.run(go())
