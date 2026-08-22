@@ -18,6 +18,7 @@ class BlackboardEntry(BaseModel):
     key: str
     value: Any
     author: str = ""
+    owner: str = ""
     version: int = 1
     status: str = "draft"
     created_at: float = Field(default_factory=time.time)
@@ -42,11 +43,27 @@ class Blackboard:
 
     async def write(
         self, key: str, value: Any, author: str = "", metadata: dict[str, Any] | None = None,
+        *, append: bool = False,
     ) -> BlackboardEntry:
         async with self._get_lock():
             existing = self._entries.get(key)
             now = time.time()
             if existing:
+                if author and existing.owner and author != existing.owner:
+                    if append:
+                        if isinstance(existing.value, list):
+                            existing.value.append({"author": author, "value": value, "at": now})
+                        else:
+                            existing.value = [
+                                {"author": existing.author, "value": existing.value, "at": existing.updated_at},
+                                {"author": author, "value": value, "at": now},
+                            ]
+                        existing.version += 1
+                        existing.updated_at = now
+                        logger.info("Blackboard append: {} v{} by {}", key, existing.version, author)
+                        return existing
+                    logger.warning("Blackboard write rejected: {} owned by {}, attempted by {}", key, existing.owner, author)
+                    return existing
                 existing.value = value
                 existing.author = author
                 existing.version += 1
@@ -57,9 +74,8 @@ class Blackboard:
                 entry = existing
             else:
                 entry = BlackboardEntry(
-                    key=key, value=value, author=author,
-                    created_at=now, updated_at=now,
-                    metadata=metadata or {},
+                    key=key, value=value, author=author, owner=author,
+                    created_at=now, updated_at=now, metadata=metadata or {},
                 )
                 self._entries[key] = entry
             logger.debug("Blackboard write: {} v{} by {}", key, entry.version, author)

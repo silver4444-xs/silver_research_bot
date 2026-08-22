@@ -89,3 +89,18 @@ def test_comm_bus_message_log_bounded():
             await bus.send(AgentMessage(from_agent="b", to_agent="a", subject=str(i)))
         assert len(bus._message_log) == 3
     asyncio.run(go())
+
+
+def test_blackboard_owner_rewrite_and_reject(tmp_path):
+    from silver_research_bot.agent.blackboard import Blackboard
+
+    async def go():
+        bb = Blackboard(tmp_path)
+        await bb.write("k", "v1", author="a")
+        e2 = await bb.write("k", "v2", author="a")
+        assert e2.value == "v2" and e2.owner == "a"   # owner 自己更新
+        e3 = await bb.write("k", "v3", author="b")
+        assert e3.value == "v2" and e3.owner == "a"   # 非 owner 拒绝（no-op）
+        e4 = await bb.write("k", "v3", author="b", append=True)
+        assert isinstance(e4.value, list)              # append-only
+    asyncio.run(go())
