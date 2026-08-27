@@ -10,9 +10,9 @@ async def main(pdf_path: str):
     model = config.agents.defaults.model
     api_key = config.get_api_key(model)
     api_base = config.get_api_base(model)
-    if not api_key and not api_base:
-        sys.exit("未配置 API Key：请先 `cp config.example.json ~/.silver_research_bot/config.json` "
-                 "并在 providers.<name> 下填写 apiKey（或用 ${ENV_VAR} 引用环境变量）。")
+    if not api_key:
+        sys.exit("未配置 API Key：请先在 ~/.silver_research_bot/config.json 填好 API Key"
+                 "（本地端点免 key 场景见 examples/04_custom_provider.py）。")
     provider = OpenAICompatProvider(
         api_key=api_key,
         api_base=api_base,

@@ -19,8 +19,8 @@ cp config.example.json ~/.silver_research_bot/config.json
 
 > 没有 API Key 时，脚本不会静默跑成功：`03_agent_chat.py` 会直接抛出
 > `ValueError: No API key configured for provider '...'`，可读可解；
-> `01_analyze_paper.py` 会在首次调用 LLM 时由底层抛明确错误。
-> `02_rag_search.py` 无需 key（无 provider 时自动回退 TF-IDF 向量）。
+> `01_analyze_paper.py` 会打印可读的「未配置 API Key」提示，并在任何网络调用前直接退出；
+> `02_rag_search.py` 无需 key（无 provider 时自动回退 TF-IDF 向量）；
 > `04_custom_provider.py` 连本地 Ollama/vLLM，无需云 key。
 
 ## 四个脚本
