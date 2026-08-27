@@ -1,18 +1,16 @@
-"""论文知识索引 — 对论文分析产物进行语义索引，替代 Dream 做论文场景记忆。
+"""论文知识索引 — 扫描 workspace/papers/ 分析产物，构建论文关系图并提供标题解析。
 
-PaperKnowledgeIndex 直接索引 workspace/papers/ 中的结构化分析产物，
-预计算 embedding 并缓存到磁盘，提供快速语义搜索。
-在 paper_memory_mode 下替代 Dream 的 LLM 二次摘要流程。
+PaperKnowledgeIndex 已退化为「关系图 + 标题解析」：语义检索统一走 ResearchRAG（单一检索源），
+本类仅保留从分析产物提取论文间关系（cites / similar_method / extends）与标题查找的能力。
+在 paper_memory_mode 下作为 ResearchRAG 的补充（关系图），不再重复做 embedding / 语义检索。
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
-import math
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from loguru import logger
 
@@ -25,10 +23,7 @@ _TOPIC_RE = re.compile(
     re.IGNORECASE,
 )
 
-if TYPE_CHECKING:
-    from silver_research_bot.rag.research_embedder import EmbeddingEngine
-
-# 需要索引的分析产物及其最大字符数
+# 需要索引的分析产物及其读取上限（仅用于关键词提取，不再持久化全文）
 _ARTIFACT_CONFIG: dict[str, dict] = {
     "analysis_system_model":    {"filename": "analysis_system_model.md",    "max_chars": 2000},
     "analysis_problem":         {"filename": "analysis_problem.md",         "max_chars": 2000},
@@ -40,17 +35,13 @@ _ARTIFACT_CONFIG: dict[str, dict] = {
     "review_domain":            {"filename": "review_domain.md",            "max_chars": 1500},
 }
 
-# 产物类型 → 人类可读标签
-_KIND_LABELS: dict[str, str] = {
-    "analysis_system_model":    "系统模型",
-    "analysis_problem":         "问题表述",
-    "analysis_algorithm":       "优化算法",
-    "analysis_experiment":      "实验设计",
-    "formula_explanations":     "公式解读",
-    "review_theory":            "理论审稿",
-    "review_engineering":       "工程审稿",
-    "review_domain":            "领域审稿",
-}
+# chunk dict 结构版本：v2 起不再持久化全文、改存 keywords（触发旧缓存失效重建）
+_SCHEMA_VERSION = 2
+
+
+def _extract_keywords(text: str) -> list[str]:
+    """从产物文本提取去重小写的技术关键词，供关系图构建。"""
+    return sorted({k.lower() for k in _TOPIC_RE.findall(text)})
 
 
 def _title_match(ref_title: str, paper_title: str) -> bool:
@@ -82,52 +73,38 @@ def _title_match(ref_title: str, paper_title: str) -> bool:
 
 
 class PaperKnowledgeIndex:
-    """对论文分析产物进行语义索引，支持磁盘缓存 embedding。
+    """扫描论文分析产物，构建轻量关系图与标题解析（不做语义检索）。
 
     用法::
 
-        index = PaperKnowledgeIndex(papers_dir, embedder, cache_dir)
-        await index.build()                        # 扫描并构建索引
-        results = await index.search("transformer")  # 语义搜索
-        ctx = await index.build_context(query)       # 构建上下文块
+        index = PaperKnowledgeIndex(papers_dir, cache_dir)
+        await index.build()                        # 扫描产物、构建关系图
+        rels = index.get_related_papers(paper_id)  # 关系查询
     """
 
     def __init__(
         self,
         papers_dir: Path,
-        embedder: "EmbeddingEngine",
         cache_dir: Path,
     ):
         self.papers_dir = papers_dir
         '论文目录（含 index.json）'
-        self.embedder = embedder
-        '嵌入引擎'
         self.cache_dir = cache_dir
         '缓存目录'
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self.cache_dir / "paper_index.json"
         '知识索引文件（chunk 元数据）'
-        self._cache_path = self.cache_dir / "embedding_cache.json"
-        'embedding 缓存文件（hash → vector）'
         self._chunks: list[dict[str, Any]] = []
-        '索引块列表 [{chunk_id, paper_id, title, artifact_kind, text, path}]'
-        self._vectors: list[list[float]] = []
-        '预计算的嵌入向量'
+        '索引块列表 [{chunk_id, paper_id, title, artifact_kind, keywords, path}]'
         self._relations: dict[str, list[dict[str, str]]] = {}
         '论文关系图: {paper_id: [{target: paper_id, type: cites|similar_method|extends}]}'
         self._built = False
         '是否已构建'
 
-    # -- hash helpers ---------------------------------------------------------
-
-    @staticmethod
-    def _content_hash(text: str) -> str:
-        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
-
     # -- build ----------------------------------------------------------------
 
     async def build(self) -> None:
-        """扫描 papers_dir，分块产物，计算 embedding，持久化缓存。
+        """扫描 papers_dir，分块产物，构建关系图，持久化 chunk 元数据缓存。
 
         若 index.json 的 mtime 未变且缓存存在，则直接从磁盘加载。
         """
@@ -139,12 +116,13 @@ class PaperKnowledgeIndex:
         # 检查缓存新鲜度
         index_mtime = papers_index.stat().st_mtime
         stored = self._load_index_meta()
-        if stored and stored.get("_mtime") == index_mtime and stored.get("_built"):
+        if (stored and stored.get("_mtime") == index_mtime and stored.get("_built")
+                and stored.get("_schema_version") == _SCHEMA_VERSION):
             logger.info("PaperKnowledgeIndex: cache is fresh, loading {} chunks from disk",
                         len(stored.get("chunks", [])))
             self._chunks = stored.get("chunks", [])
-            await self._load_vectors_from_cache()
             self._built = True
+            self._build_relations()
             return
 
         # 加载论文索引
@@ -177,7 +155,7 @@ class PaperKnowledgeIndex:
                     "paper_id": paper_id,
                     "title": title,
                     "artifact_kind": kind,
-                    "text": text,
+                    "keywords": _extract_keywords(text),
                     "path": str(fpath),
                 })
 
@@ -185,21 +163,16 @@ class PaperKnowledgeIndex:
             logger.info("PaperKnowledgeIndex: no artifacts to index")
             return
 
-        # 批量计算 embedding
-        texts = [c["text"] for c in chunks]
-        vectors = await self.embedder.embed_batch(texts)
-
         self._chunks = chunks
-        self._vectors = vectors
         self._built = True
 
-        # 持久化
+        # 持久化 chunk 元数据
         self._save_index_meta({
             "_mtime": index_mtime,
             "_built": True,
+            "_schema_version": _SCHEMA_VERSION,
             "chunks": chunks,
         })
-        self._save_vectors_to_cache(texts, vectors)
         logger.info(
             "PaperKnowledgeIndex: built index with {} chunks from {} papers",
             len(chunks), len({c["paper_id"] for c in chunks}),
@@ -207,63 +180,6 @@ class PaperKnowledgeIndex:
 
         # 构建论文关系图（无额外 LLM 调用）
         self._build_relations()
-
-    # -- search ---------------------------------------------------------------
-
-    async def search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        """按语义相似度搜索论文知识。
-
-        返回: [{"paper_id", "title", "artifact_kind", "score", "text_snippet"}, …]
-        """
-        if not self._built or not self._chunks:
-            return []
-
-        query_vec = await self.embedder.embed_single(query)
-        scored: list[tuple[int, float]] = []
-        for i, vec in enumerate(self._vectors):
-            sim = self._cosine_similarity(query_vec, vec)
-            if sim > 0.2:
-                scored.append((i, sim))
-        scored.sort(key=lambda x: x[1], reverse=True)
-        scored = scored[:top_k]
-
-        results: list[dict[str, Any]] = []
-        for idx, score in scored:
-            chunk = self._chunks[idx]
-            results.append({
-                "paper_id": chunk["paper_id"],
-                "title": chunk["title"],
-                "artifact_kind": chunk["artifact_kind"],
-                "score": round(score, 3),
-                "text_snippet": chunk["text"][:300],
-            })
-        return results
-
-    async def build_context(self, query: str, top_k: int = 5) -> str:
-        """构建可注入系统提示的论文知识上下文块。
-
-        按论文分组排布，每篇论文列出相关产物的摘要片段。
-        """
-        results = await self.search(query, top_k)
-        if not results:
-            return ""
-
-        # 按论文分组
-        paper_groups: dict[str, list[dict[str, Any]]] = {}
-        for r in results:
-            paper_groups.setdefault(r["paper_id"], []).append(r)
-
-        lines = ["## Paper Knowledge（相关论文分析结果）"]
-        for paper_id, items in paper_groups.items():
-            title = items[0]["title"]
-            lines.append(f"\n### {title}")
-            for item in items:
-                label = _KIND_LABELS.get(item["artifact_kind"], item["artifact_kind"])
-                snippet = item["text_snippet"].replace("\n", " ")[:200]
-                lines.append(f"- [{label}] {snippet}")
-        return "\n".join(lines) + "\n"
-
-    # -- cache management -----------------------------------------------------
 
     # -- relations ------------------------------------------------------------
 
@@ -287,9 +203,8 @@ class PaperKnowledgeIndex:
                     "title": chunk["title"],
                     "keywords": set(),
                 }
-            # 从文本中提取技术关键词
-            keywords = _TOPIC_RE.findall(chunk["text"])
-            paper_info[pid]["keywords"].update(k.lower() for k in keywords)
+            # 使用索引期预提取的技术关键词（v2 起不存全文）
+            paper_info[pid]["keywords"].update(chunk.get("keywords", []))
 
         paper_ids = list(paper_info.keys())
 
@@ -318,8 +233,7 @@ class PaperKnowledgeIndex:
             if not summary_path.exists():
                 continue
             try:
-                import json as _json
-                summary = _json.loads(summary_path.read_text(encoding="utf-8"))
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
                 # 引用关系: 从 references / citations 字段
                 refs = summary.get("references") or summary.get("citations") or []
                 for ref in refs:
@@ -395,15 +309,14 @@ class PaperKnowledgeIndex:
     def invalidate(self, paper_id: str | None = None) -> None:
         """使缓存失效。若不指定 paper_id 则清空全部。"""
         if paper_id is None:
-            for f in (self._index_path, self._cache_path):
-                if f.exists():
-                    f.unlink()
+            if self._index_path.exists():
+                self._index_path.unlink()
             self._built = False
             self._chunks.clear()
-            self._vectors.clear()
+            self._relations.clear()
             logger.info("PaperKnowledgeIndex: full cache invalidated")
             return
-        # 选择性失效：移除特定论文的 chunk 和对应 vector
+        # 选择性失效：移除特定论文的 chunk
         stored = self._load_index_meta()
         if stored:
             old_chunks = stored.get("chunks", [])
@@ -421,7 +334,7 @@ class PaperKnowledgeIndex:
         return any(c["paper_id"] == paper_id for c in self._chunks)
 
     async def add_paper(self, paper_id: str) -> bool:
-        """增量索引单篇论文的分析产物。返回 True 表示添加了新 chunk。
+        """增量索引单篇论文的分析产物（仅更新 chunk 元数据与关系图）。返回 True 表示添加了新 chunk。
 
         若论文尚未完成分析或已被索引，返回 False。
         """
@@ -462,7 +375,7 @@ class PaperKnowledgeIndex:
                 "paper_id": paper_id,
                 "title": title,
                 "artifact_kind": kind,
-                "text": text,
+                "keywords": _extract_keywords(text),
                 "path": str(fpath),
             })
 
@@ -470,25 +383,18 @@ class PaperKnowledgeIndex:
             logger.info("PaperKnowledgeIndex: no artifacts for paper {}", paper_id)
             return False
 
-        # Compute embeddings
-        texts = [c["text"] for c in new_chunks]
-        vectors = await self.embedder.embed_batch(texts)
-
         # Append to in-memory index
         self._chunks.extend(new_chunks)
-        self._vectors.extend(vectors)
         self._built = True
 
         # Update index meta
         stored = self._load_index_meta() or {}
         stored["_built"] = True
+        stored["_schema_version"] = _SCHEMA_VERSION
         stored["chunks"] = self._chunks
         if "_mtime" in stored:
             del stored["_mtime"]  # invalidate mtime cache
         self._save_index_meta(stored)
-
-        # Update embedding cache
-        self._save_vectors_to_cache(texts, vectors)
 
         # Rebuild relations (cheap, no LLM call)
         self._build_relations()
@@ -514,46 +420,3 @@ class PaperKnowledgeIndex:
             json.dumps(meta, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-
-    # -- internal: vector cache I/O ------------------------------------------
-
-    async def _load_vectors_from_cache(self) -> None:
-        """从磁盘缓存恢复 embedding 向量。
-
-        先恢复 embedder 的内存缓存，再用 embed_batch（全缓存命中）获取向量。
-        """
-        if not self._cache_path.exists() or not self._chunks:
-            return
-        try:
-            cache_data = json.loads(self._cache_path.read_text(encoding="utf-8"))
-            for h, vec in cache_data.items():
-                self.embedder._cache[h] = vec
-        except Exception:
-            logger.warning("PaperKnowledgeIndex: failed to load embedding cache")
-            return
-
-        # 用 embed_batch 获取向量（此时全部命中内存缓存，无 API 调用）
-        texts = [c["text"] for c in self._chunks]
-        self._vectors = await self.embedder.embed_batch(texts)
-
-    def _save_vectors_to_cache(self,
-                               texts: list[str],
-                               vectors: list[list[float]]) -> None:
-        """将 hash→vector 映射持久化到磁盘。"""
-        cache_data: dict[str, list[float]] = {}
-        for text, vec in zip(texts, vectors):
-            h = self._content_hash(text)
-            cache_data[h] = vec
-        self._cache_path.write_text(
-            json.dumps(cache_data, ensure_ascii=False),
-            encoding="utf-8",
-        )
-
-    # -- internal: similarity ------------------------------------------------
-
-    @staticmethod
-    def _cosine_similarity(a: list[float], b: list[float]) -> float:
-        dot = sum(x * y for x, y in zip(a, b))
-        na = math.sqrt(sum(x * x for x in a)) + 1e-10
-        nb = math.sqrt(sum(y * y for y in b)) + 1e-10
-        return dot / (na * nb)

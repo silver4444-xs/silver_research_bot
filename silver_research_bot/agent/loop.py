@@ -226,6 +226,9 @@ class AgentLoop:
             paper_manager: Any | None = None,
             paper_orchestrator: Any | None = None,
             paper_memory_mode: bool = False,
+            rag_config: Any | None = None,
+            rag_tools_config: Any | None = None,
+            paper_search_config: Any | None = None,
     ):
         from silver_research_bot.config.schema import ExecToolConfig, ToolsConfig, WebToolsConfig
 
@@ -272,6 +275,10 @@ class AgentLoop:
         self.web_config = web_config or WebToolsConfig()
         self.exec_config = exec_config or ExecToolConfig()
         self._config = tools_config or ToolsConfig()
+        self._rag_config = rag_config
+        self._rag_tools_config = rag_tools_config
+        self._paper_search_config = paper_search_config
+        self._rag: Any | None = None  # RAG 引擎实例（register_rag_tools 时创建，供分析产物入库回调用）
 
         self.restrict_to_workspace = restrict_to_workspace
         '是否限制文件操作在 workspace 内'
@@ -463,39 +470,11 @@ class AgentLoop:
             )
             self.tools.register(WebFetchTool(proxy=self.web_config.proxy))
         # Paper search tool (arXiv, Semantic Scholar, PubMed, DBLP)
-        paper_cfg = getattr(self._config, "paper_search", None)
+        paper_cfg = self._paper_search_config
         pubmed_email = getattr(paper_cfg, "pubmed_email", "") if paper_cfg else ""
         ss_key = getattr(paper_cfg, "semantic_scholar_api_key", "") if paper_cfg else ""
         self.tools.register(PaperSearchTool(pubmed_email=pubmed_email, semantic_scholar_key=ss_key))
-        # RAG tools — unified search across literature + analysis artifacts
-        if self.paper_memory_mode and getattr(self.context, "paper_knowledge", None):
-            try:
-                from silver_research_bot.rag.research_rag import ResearchRAG as _ResearchRAG
-                from silver_research_bot.agent.tools.rag_tools import (
-                    RagSearchTool, RagAskTool, RagIngestTool, RagCompareTool, UnifiedRAG,
-                )
-                _rag_instance = _ResearchRAG(
-                    provider=self.provider,
-                    config=getattr(self._config, "rag", None),
-                )
-                _unified = UnifiedRAG(
-                    research_rag=_rag_instance,
-                    paper_knowledge=self.context.paper_knowledge,
-                    config=getattr(self._config, "rag_tools", None),
-                )
-                self.tools.register(RagSearchTool(
-                    unified=_unified,
-                    paper_search_tool=self.tools.get("paper_search"),
-                    web_search_tool=self.tools.get("web_search"),
-                ))
-                self.tools.register(RagAskTool(
-                    unified=_unified,
-                    provider=self.provider,
-                ))
-                self.tools.register(RagIngestTool(unified=_unified))
-                self.tools.register(RagCompareTool(unified=_unified))
-            except Exception:
-                logger.exception("Failed to register RAG tools")
+        # RAG tools are registered lazily via register_rag_tools() after paper_knowledge is attached.
         # Paper analysis tools — wired only when manager/orchestrator are injected
         if self._paper_orchestrator:
             from silver_research_bot.paper_analyzer.tools import AnalyzePaperTool
@@ -532,6 +511,37 @@ class AgentLoop:
             self.tools.register(
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
             )
+
+    def register_rag_tools(self) -> None:
+        """在 paper_knowledge 挂载后注册 RAG 工具（延迟注册，规避初始化顺序问题）。"""
+        if not (self.paper_memory_mode and getattr(self.context, "paper_knowledge", None)):
+            return
+        try:
+            from silver_research_bot.rag.research_rag import ResearchRAG as _ResearchRAG
+            from silver_research_bot.agent.tools.rag_tools import (
+                RagSearchTool, RagAskTool, RagIngestTool, RagCompareTool, UnifiedRAG,
+            )
+            self._rag = _ResearchRAG(
+                provider=self.provider,
+                config=self._rag_config,
+            )
+            # 供 context.prepare_paper_context 以 ResearchRAG 为单一检索源注入分析产物
+            self.context.rag = self._rag
+            unified = UnifiedRAG(
+                research_rag=self._rag,
+                paper_knowledge=self.context.paper_knowledge,
+                config=self._rag_tools_config,
+            )
+            self.tools.register(RagSearchTool(
+                unified=unified,
+                paper_search_tool=self.tools.get("paper_search"),
+                web_search_tool=self.tools.get("web_search"),
+            ))
+            self.tools.register(RagAskTool(unified=unified, provider=self.provider))
+            self.tools.register(RagIngestTool(unified=unified))
+            self.tools.register(RagCompareTool(unified=unified, provider=self.provider))
+        except Exception:
+            logger.exception("Failed to register RAG tools")
 
     async def _connect_mcp(self) -> None:
         """懒加载方式连接到配置的 MCP（Model Context Protocol）服务器，动态注册 MCP 提供的额外工具"""
@@ -1124,7 +1134,7 @@ class AgentLoop:
             logger.exception("MemoryKeeper: background processing failed")
 
     async def _on_paper_analysis_complete(self, paper_id: str) -> None:
-        """论文分析完成回调：触发 PaperKnowledgeIndex 增量索引。"""
+        """论文分析完成回调：触发 PaperKnowledgeIndex 增量索引 + RAG 分析产物入库。"""
         pk = getattr(self.context, "paper_knowledge", None)
         if pk is None:
             return
@@ -1136,6 +1146,16 @@ class AgentLoop:
             logger.exception(
                 "PaperKnowledgeIndex: failed to add paper {}", paper_id
             )
+
+        # 分析产物入库 → RAG chunk_type="analysis"（幂等，失败仅记日志）
+        rag = getattr(self, "_rag", None)
+        if rag is not None:
+            try:
+                from silver_research_bot.rag.research_analysis import ingest_paper_analysis
+                await ingest_paper_analysis(rag, pk.papers_dir, paper_id)
+                logger.info("RAG ingest done for {}", paper_id)
+            except Exception:
+                logger.exception("RAG ingest failed for {}", paper_id)
 
     def stop(self) -> None:
         """停止 agent 循环"""

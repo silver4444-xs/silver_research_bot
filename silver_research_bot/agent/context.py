@@ -40,6 +40,8 @@ class ContextBuilder:
         '技能加载器，管理可动态激活的提示模块'
         self.paper_knowledge = None
         'PaperKnowledgeIndex 实例（paper_memory_mode 时由 loop.py 设置）'
+        self.rag = None
+        'ResearchRAG 实例（paper_memory_mode 时由 loop.py 设置，供 prepare_paper_context 检索分析产物）'
         self._paper_context: str = ""
         '当前轮次的论文知识上下文（由 prepare_paper_context 设置）'
         self._research_context_block: str = ""
@@ -48,15 +50,17 @@ class ContextBuilder:
         '当前轮次检索到的活跃记忆文本（由 ActiveMemoryRetriever 设置）'
 
     async def prepare_paper_context(self, query: str) -> None:
-        """根据用户查询，从 PaperKnowledgeIndex 检索相关论文分析结果。
+        """根据用户查询，从 ResearchRAG 检索相关论文分析产物（analysis chunk）。
 
         结果存入 self._paper_context，供 build_system_prompt() 注入。
         """
-        if self.paper_knowledge is None:
+        rag = getattr(self, "rag", None)
+        if rag is None:
             self._paper_context = ""
             return
         try:
-            self._paper_context = await self.paper_knowledge.build_context(query)
+            ctx = await rag.build_context(query, top_k=5, modality="analysis")
+            self._paper_context = ctx.get("context", "") if isinstance(ctx, dict) else ""
         except Exception:
             self._paper_context = ""
 
