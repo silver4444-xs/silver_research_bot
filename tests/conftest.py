@@ -14,7 +14,10 @@ def parsed_dataset():
     """Parse 公式汇总.md once per test run — expensive, so module-scoped."""
     from tests.parse_formula_md import parse_formulas_md
 
-    return parse_formulas_md()
+    try:
+        return parse_formulas_md()
+    except FileNotFoundError:
+        pytest.skip("公式汇总.md not found — skipping formula ground-truth evaluation")
 
 
 @pytest.fixture(scope="module")

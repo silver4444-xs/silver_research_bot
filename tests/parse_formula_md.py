@@ -95,7 +95,7 @@ def parse_formulas_md(filepath: str | Path | None = None) -> ParsedDataset:
         ParsedDataset with all extracted formulas, categorized by paper and type.
     """
     if filepath is None:
-        filepath = Path(__file__).resolve().parent.parent / "公式汇总.md"
+        filepath = Path(__file__).resolve().parent.parent / "docs" / "公式汇总.md"
     else:
         filepath = Path(filepath)
 

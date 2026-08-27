@@ -1,6 +1,8 @@
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from silver_research_bot.agent.subagent import SpawnHandle, SubagentManager
 from silver_research_bot.bus.queue import MessageBus
 
@@ -107,7 +109,7 @@ def test_blackboard_owner_rewrite_and_reject(tmp_path):
 
 
 def test_trace_agent_turn_sets_current_run(monkeypatch):
-    import langsmith.run_helpers as rh
+    rh = pytest.importorskip("langsmith.run_helpers")
     from silver_research_bot.utils import langsmith_utils as lu
 
     captured = {}
