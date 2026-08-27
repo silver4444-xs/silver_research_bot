@@ -10,7 +10,7 @@
       </div>
     </div>
     <nav class="nav">
-      <router-link v-for="it in nav" :key="it.id" :to="it.to" class="navi">
+      <router-link v-for="it in nav" :key="it.id" :to="it.to" class="navi" active-class="act">
         <svg viewBox="0 0 24 24" v-html="it.icon"></svg>
         {{ it.label }}
       </router-link>
