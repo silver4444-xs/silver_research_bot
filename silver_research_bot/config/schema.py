@@ -344,16 +344,38 @@ class RAGConfig(Base):
     '嵌入模型名称'
     embedding_dimensions: int = 1536
     '嵌入向量维度'
-    bm25_weight: float = Field(default=0.3, ge=0.0, le=1.0)
-    'BM25 关键词匹配权重 (0-1)'
-    vector_weight: float = Field(default=0.7, ge=0.0, le=1.0)
-    '向量相似度权重 (0-1)'
+    embed_cache_enabled: bool = True
+    '是否启用嵌入磁盘缓存（重启后 reindex 无需重嵌未变 chunk）'
     coarse_top_k: int = Field(default=20, ge=1, le=100)
     '粗排候选数'
     final_top_k: int = Field(default=5, ge=1, le=20)
     '精排最终返回数'
     rerank_enabled: bool = True
     '是否启用 LLM 重排序'
+    rerank_model: str | None = None
+    '重排序用的 chat 模型名（None 时用 provider 默认模型）'
+    rerank_cache_ttl_seconds: int = Field(default=3600, ge=0, le=86400)
+    '重排结果缓存 TTL（秒），0 表示禁用缓存'
+    rerank_cache_max_entries: int = Field(default=512, ge=1, le=100000)
+    '重排结果缓存最大条目数（LRU 淘汰）'
+    rerank_max_tokens: int = Field(default=512, ge=64, le=4096)
+    '重排 LLM 最大输出 token'
+    rerank_candidate_max_chars: int = Field(default=1000, ge=200, le=8000)
+    '重排候选文本截断上限（字符数）'
+    chunk_size: int = Field(default=800, ge=100, le=8000)
+    '切片目标大小（token 数，tiktoken cl100k_base 计数；不可用时按字符启发式估算）'
+    chunk_overlap: int = Field(default=25, ge=0, le=2000)
+    '切片重叠（token 数，按空白分词切取。CJK 等无空白文本整块只算 1 个 token，会导致后块被前置整个前块、体积近翻倍）'
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    '最低相关性阈值（RRF 归一化分 [0,1]，低于此值丢弃，0 表示不过滤）'
+    query_expansion_enabled: bool = True
+    '是否启用 LLM 查询扩展（无 provider 时自动降级为单 query）'
+    query_expansion_count: int = Field(default=3, ge=1, le=8)
+    '查询扩展生成的改写条数（不含原始 query）'
+    query_expansion_cache_ttl_seconds: int = Field(default=3600, ge=0, le=86400)
+    '查询扩展结果缓存 TTL（秒），0 表示禁用缓存'
+    query_expansion_cache_max_entries: int = Field(default=512, ge=1, le=100000)
+    '查询扩展结果缓存最大条目数（LRU 淘汰）'
 
 
 class RAGToolConfig(Base):

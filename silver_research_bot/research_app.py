@@ -7,6 +7,7 @@ from typing import Any
 
 import asyncio
 import json
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -18,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from silver_research_bot import __version__
 from silver_research_bot.research_core import ResearchCore
-from silver_research_bot.rag import ResearchRAG
+from silver_research_bot.rag import ResearchRAG, ingest_paper_analysis
 from silver_research_bot.paper_analyzer.manager import PaperManager
 from silver_research_bot.paper_analyzer.orchestrator import PaperOrchestrator
 
@@ -54,19 +55,72 @@ class PaperIngestRequest(BaseModel):
     content: str = Field(..., min_length=1)
     authors: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    year: int | None = None
+    venue: str | None = None
 
 
 class RagSearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
     tag: str | None = None
-    modality: str | None = None  # "text" | "formula" | "figure" | "table" | None (all)
+    modality: str | None = None  # "text" | "analysis" | None (all)
     rerank: bool = True
+    author: str | None = None
+    year: int | None = None
+    venue: str | None = None
+    # ── 以下供 RAG 验收台使用（docs/superpowers/specs/2026-08-25-rag-lab-page-design.md）
+    # 覆盖配置的 min_score。注意阈值作用在 RRF 归一化之后，top-1 恒为 1.0，永远过不掉
+    min_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    coarse_top_k: int | None = Field(default=None, ge=1, le=100)  # 覆盖配置的粗排候选数
+    debug: bool = False  # 返回链路中间态（stages/dropped/channels/rrf_raw），日常检索保持 false
+    bypass_expansion_cache: bool = False  # 跳过查询扩展读缓存，消除 A/B 对比的混淆变量
+
+
+class RagAskRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    top_k: int = Field(default=5, ge=1, le=20)
+    tag: str | None = None
+    modality: str | None = None
+    rerank: bool = True
+    author: str | None = None
+    year: int | None = None
+    venue: str | None = None
+    min_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    coarse_top_k: int | None = Field(default=None, ge=1, le=100)
+    bypass_expansion_cache: bool = False
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    max_answer_chars: int = Field(default=2000, ge=200, le=20000)
+
+
+class RunCreateRequest(BaseModel):
+    """留存一次检索。retrieval 直接放 search(debug=true) 的整份响应。"""
+
+    retrieval: dict[str, Any] = Field(..., description="search(debug=true) 的响应体")
+    generation: dict[str, Any] | None = Field(default=None, description="ask 的响应体，无问答则 null")
+    label: str = ""
+    tags: list[str] = Field(default_factory=list)
+    labeler: str = ""
+
+
+class RunUpdateRequest(BaseModel):
+    """改名 / 打标 / 标注。字段为 None 表示本次不改它——区别于「改成空」。"""
+
+    label: str | None = None
+    tags: list[str] | None = None
+    labeler: str | None = None
+    annotations: dict[str, Any] | None = None
+    # 默认合并：标注是一条条打的，第二次提交不能抹掉第一次
+    replace_annotations: bool = False
 
 
 class RagContextRequest(BaseModel):
     query: str = Field(..., min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
+    modality: str | None = None  # "text" | "analysis" | None (all)
+    tag: str | None = None
+    author: str | None = None
+    year: int | None = None
+    venue: str | None = None
 
 
 app = FastAPI(title="Silver Research Bot Research API", version=__version__)
@@ -81,6 +135,16 @@ app.add_middleware(
 engine = ResearchCore()
 rag = ResearchRAG()
 _rag_initialized = False
+_run_store = None
+
+
+def _get_run_store():
+    """RAG 验收台的 run 留存。懒加载：不进验收台的部署不必建这个目录。"""
+    global _run_store
+    if _run_store is None:
+        from silver_research_bot.rag.research_runs import RunStore
+        _run_store = RunStore()
+    return _run_store
 
 
 def _get_rag() -> ResearchRAG:
@@ -229,8 +293,18 @@ def add_note(run_id: str, payload: dict[str, str]) -> dict[str, Any]:
 
 
 @app.get("/api/rag/papers")
-def list_papers() -> list[dict[str, Any]]:
-    return _get_rag().list_papers()
+def list_papers(limit: int | None = None, offset: int = 0) -> list[dict[str, Any]]:
+    return _get_rag().list_papers(limit=limit, offset=offset)
+
+
+@app.get("/api/rag/tags")
+def rag_tags() -> list[str]:
+    return _get_rag().list_tags()
+
+
+@app.get("/api/rag/authors")
+def rag_authors() -> list[str]:
+    return _get_rag().list_authors()
 
 
 @app.post("/api/rag/papers")
@@ -242,10 +316,48 @@ async def add_paper(request: PaperIngestRequest) -> dict[str, Any]:
             content=request.content,
             authors=request.authors,
             tags=request.tags,
+            year=request.year,
+            venue=request.venue,
         )
     except Exception as exc:
         logger.exception("文献入库失败")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/rag/upload")
+async def rag_upload(
+    file: UploadFile,
+    authors: str = "",
+    tags: str = "",
+    year: int | None = None,
+    venue: str | None = None,
+) -> dict[str, Any]:
+    """上传整个文件 (PDF/TXT/MD 等) 直接入库 RAG，自动抽取全文。"""
+    suffix = Path(file.filename or "document.txt").suffix.lower()
+    if suffix not in (".pdf", ".txt", ".md", ".docx", ".xlsx", ".pptx"):
+        raise HTTPException(status_code=400, detail="仅支持 PDF / TXT / MD / DOCX / XLSX / PPTX")
+    tmp = Path(f"/tmp/rag_{uuid.uuid4().hex}{suffix}")
+    try:
+        tmp.write_bytes(await file.read())
+        from silver_research_bot.utils.document import extract_text
+        text = extract_text(tmp)
+        if text is None or text.startswith("[error:") or not text.strip():
+            raise HTTPException(status_code=400, detail="无法从文件中提取文本")
+        title = Path(file.filename or "document").stem
+        author_list = [a.strip() for a in authors.split(",") if a.strip()]
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+        return await _get_rag().add_paper(
+            title=title, abstract="", content=text,
+            authors=author_list, tags=tag_list, year=year, venue=venue,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("文献文件上传入库失败")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 @app.post("/api/rag/search")
@@ -254,16 +366,122 @@ async def rag_search(request: RagSearchRequest) -> dict[str, Any]:
         return await _get_rag().search(
             request.query, top_k=request.top_k, tag=request.tag,
             modality=request.modality, rerank=request.rerank,
+            author=request.author, year=request.year, venue=request.venue,
+            min_score=request.min_score, coarse_top_k=request.coarse_top_k,
+            debug=request.debug, bypass_expansion_cache=request.bypass_expansion_cache,
         )
     except Exception as exc:
         logger.exception("RAG 检索失败")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+_ASK_PROMPT = (
+    "你是学术研究助手。**仅**依据下列检索片段回答问题。\n"
+    "每处结论后用 [N] 标注来源编号，N 即片段前的编号。\n"
+    "检索片段未涵盖的内容，直接说明「检索结果未涵盖」，不要用已有知识补充。\n\n"
+    "{context}\n\n"
+    "问题：{question}\n\n"
+    "请用中文回答，不超过 {max_chars} 字。"
+)
+
+
+def _numbered_context(results: list[dict[str, Any]]) -> str:
+    """把检索结果编号后拼给 LLM 看。位置即编号，与 sources 同源同序。"""
+    blocks = []
+    for i, r in enumerate(results, 1):
+        head = f"[{i}] {r.get('title') or 'Untitled'}"
+        if r.get("section"):
+            head += f" · {r['section']}"
+        blocks.append(f"{head}\n{r.get('text', '')}")
+    return "\n\n".join(blocks)
+
+
+@app.post("/api/rag/ask")
+async def rag_ask(request: RagAskRequest) -> dict[str, Any]:
+    """检索 + 生成 + [N] 引用归因。
+
+    与 UnifiedRAG.ask 的关键差别：**只检索一次**。后者分别调 search() 与
+    build_context()（内部又搜一次）产出 sources 和给 LLM 看的编号列表，两者
+    没有任何对齐保证——在那个地基上做 [N] 归因，归因本身就是假的。
+    """
+    from silver_research_bot.rag.research_grounding import analyze_grounding
+
+    try:
+        rag_inst = _get_rag()
+        retrieval = await rag_inst.search(
+            request.question, top_k=request.top_k, tag=request.tag,
+            modality=request.modality, rerank=request.rerank,
+            author=request.author, year=request.year, venue=request.venue,
+            min_score=request.min_score, coarse_top_k=request.coarse_top_k,
+            debug=True, bypass_expansion_cache=request.bypass_expansion_cache,
+        )
+        results = retrieval["results"]
+        sources = [
+            {
+                "idx": i,
+                "chunk_id": r.get("chunk_id", ""),
+                "paper_id": r.get("paper_id", ""),
+                "title": r.get("title", ""),
+                "section": r.get("section", ""),
+            }
+            for i, r in enumerate(results, 1)
+        ]
+        context = _numbered_context(results)
+
+        # 生成状态显式化：与重排的 skipped/failed 同一套纪律——
+        # "没生成"和"生成了但没引用"在返回值里必须能分开
+        if not results:
+            answer, status = "未在知识库中检索到相关内容。", "no_results"
+            reason = "检索结果为空，未调用 LLM"
+        elif rag_inst._provider is None:
+            answer, status = context, "no_provider"
+            reason = "未配置 LLM provider，以下为检索原文，非生成结果"
+        else:
+            prompt = _ASK_PROMPT.format(
+                context=context, question=request.question, max_chars=request.max_answer_chars,
+            )
+            try:
+                resp = await rag_inst._provider.chat_with_retry(
+                    messages=[{"role": "user", "content": prompt}],
+                    tools=None,
+                    max_tokens=min(request.max_answer_chars // 2, 2000),
+                    temperature=request.temperature,
+                )
+                answer = (resp.content or "")[: request.max_answer_chars]
+                status, reason = "ok", None
+            except Exception as exc:
+                logger.exception("RAG 问答：LLM 调用失败")
+                answer = context
+                status = "llm_failed"
+                reason = f"LLM 调用失败（{type(exc).__name__}: {exc}），以下为检索原文"
+
+        # 只对**真正生成出来的**答案做归因。回退时 answer 是检索原文，而原文里
+        # 的编号头（"[1] 标题 · 章节"）会被当成引用标记，算出一份漂亮的假指标。
+        # 传空串等价于"本次没有可归因的生成"，指标如实为 0 / None。
+        grounding = analyze_grounding(answer if status == "ok" else "", sources)
+        return {
+            "run_id": retrieval.get("run_id"),
+            "question": request.question,
+            "answer": answer,
+            "generation_status": status,
+            "generation_reason": reason,
+            "sources": sources,
+            "context": context,
+            "retrieval": retrieval,
+            **grounding,
+        }
+    except Exception as exc:
+        logger.exception("RAG 问答失败")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.post("/api/rag/context")
 async def rag_context(request: RagContextRequest) -> dict[str, Any]:
     try:
-        return await _get_rag().build_context(request.query, top_k=request.top_k)
+        return await _get_rag().build_context(
+            request.query, top_k=request.top_k, modality=request.modality,
+            tag=request.tag, author=request.author, year=request.year, venue=request.venue,
+        )
     except Exception as exc:
         logger.exception("RAG 上下文构建失败")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -272,7 +490,10 @@ async def rag_context(request: RagContextRequest) -> dict[str, Any]:
 @app.post("/api/rag/suggest")
 async def rag_suggest(request: RagContextRequest) -> dict[str, Any]:
     try:
-        return await _get_rag().suggest_research(request.query, top_k=request.top_k)
+        return await _get_rag().suggest_research(
+            request.query, top_k=request.top_k, modality=request.modality,
+            tag=request.tag, author=request.author, year=request.year, venue=request.venue,
+        )
     except Exception as exc:
         logger.exception("RAG 建议生成失败")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -283,12 +504,160 @@ def rag_snapshot() -> dict[str, Any]:
     return _get_rag().export_snapshot()
 
 
+# RAGConfig 字段 → ResearchRAG 实例属性名。回显读实例而非重新 load_config()：
+# 配置文件改了但没重启时二者不一致，验收页要看的是进程内真正生效的那份。
+_RAG_CONFIG_ATTRS = {
+    "embedding_model": "_embedding_model",
+    "embedding_dimensions": "_embedding_dim",
+    "embed_cache_enabled": "_embed_cache_enabled",
+    "coarse_top_k": "_coarse_top_k",
+    "final_top_k": "_final_top_k",
+    "rerank_enabled": "_rerank_enabled",
+    "rerank_model": "_rerank_model",
+    "rerank_cache_ttl_seconds": "_rerank_cache_ttl",
+    "rerank_cache_max_entries": "_rerank_cache_max",
+    "rerank_max_tokens": "_rerank_max_tokens",
+    "rerank_candidate_max_chars": "_rerank_candidate_max_chars",
+    "chunk_size": "_chunk_size",
+    "chunk_overlap": "_chunk_overlap",
+    "min_score": "_min_score",
+    "query_expansion_enabled": "_query_expansion_enabled",
+    "query_expansion_count": "_query_expansion_count",
+    "query_expansion_cache_ttl_seconds": "_query_expansion_cache_ttl",
+    "query_expansion_cache_max_entries": "_query_expansion_cache_max",
+}
+
+# 改这些要全量 reindex：会变更 chunk_id 或向量本身
+_RAG_REINDEX_FIELDS = frozenset({
+    "embedding_model", "embedding_dimensions", "chunk_size", "chunk_overlap",
+})
+# 这些可以按请求逐次覆盖，不必改配置
+_RAG_REQUEST_FIELDS = frozenset({"coarse_top_k", "final_top_k", "min_score"})
+
+# 只写"照字面读会踩坑"的那几项，不为每个字段凑一句废话
+_RAG_FIELD_NOTES = {
+    "final_top_k": "请求参数名是 top_k，不是 final_top_k",
+    "min_score": "阈值比较的是 RRF 归一化后的相对分，top-1 恒为 1.0，因此永远无法过滤掉 top-1",
+    "rerank_enabled": (
+        "请求可传 rerank=false 单向关闭；但本项为 false 时重排器根本没构造，"
+        "请求传 true 也开不起来"
+    ),
+    "query_expansion_cache_ttl_seconds": (
+        "请求可传 bypass_expansion_cache=true 跳过读缓存；TTL 本身需重启才能改"
+    ),
+    "chunk_overlap": (
+        "按空白分词切取。CJK 等无空白文本整块只算 1 个 token，"
+        "会导致后块被前置整个前块、体积近翻倍"
+    ),
+}
+
+
+@app.get("/api/rag/config")
+def rag_config() -> dict[str, Any]:
+    """只读回显 RAG 全链路配置，并标出每项要改需付什么代价。"""
+    from silver_research_bot.config.schema import RAGConfig
+
+    inst = _get_rag()
+    config: dict[str, Any] = {}
+    mutability: dict[str, Any] = {}
+    for field in RAGConfig.model_fields:
+        attr = _RAG_CONFIG_ATTRS.get(field)
+        config[field] = getattr(inst, attr, None) if attr else None
+        if field in _RAG_REINDEX_FIELDS:
+            scope = "reindex"
+        elif field in _RAG_REQUEST_FIELDS:
+            scope = "request"
+        else:
+            scope = "restart"
+        mutability[field] = {"scope": scope, "note": _RAG_FIELD_NOTES.get(field, "")}
+
+    return {
+        "config": config,
+        "mutability": mutability,
+        # schema 新增字段但没同步映射表时，这里非空——避免静默回显 null 冒充"生效值"
+        "unmapped_fields": [f for f in RAGConfig.model_fields if f not in _RAG_CONFIG_ATTRS],
+        "request_overridable": [
+            "top_k", "coarse_top_k", "min_score", "rerank", "bypass_expansion_cache",
+            "tag", "modality", "author", "year", "venue",
+        ],
+        "scope_legend": {
+            "request": "每次请求可覆盖",
+            "restart": "改配置后需重启进程（RAG 实例懒加载一次即固化，无 reload 机制）",
+            "reindex": "改配置后需重启并全量 reindex（会变更 chunk_id 或向量）",
+        },
+    }
+
+
+# ── run 留存与标注（§5.3）────────────────────────────────────
+# 具体路径 /api/rag/runs 在前，带参路径 /api/rag/runs/{run_id} 在后。
+# 非法 run_id 由 RunStore 抛 ValueError（挡路径穿越），这里一律转 400。
+
+@app.post("/api/rag/runs")
+def rag_run_create(request: RunCreateRequest) -> dict[str, Any]:
+    try:
+        return _get_run_store().create(
+            retrieval=request.retrieval, generation=request.generation,
+            label=request.label, tags=request.tags, labeler=request.labeler,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/rag/runs")
+def rag_run_list(limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    return _get_run_store().list_runs(limit=limit, offset=offset)
+
+
+@app.get("/api/rag/runs/{run_id}")
+def rag_run_get(run_id: str) -> dict[str, Any]:
+    try:
+        run = _get_run_store().get(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"run 不存在：{run_id}")
+    return run
+
+
+@app.put("/api/rag/runs/{run_id}")
+def rag_run_update(run_id: str, request: RunUpdateRequest) -> dict[str, Any]:
+    # None = 本次不改这个字段；传 "" / [] 才是改成空
+    patch: dict[str, Any] = {"replace_annotations": request.replace_annotations}
+    if request.label is not None:
+        patch["label"] = request.label
+    if request.tags is not None:
+        patch["tags"] = request.tags
+    if request.labeler is not None:
+        patch["labeler"] = request.labeler
+    if request.annotations is not None:
+        patch["annotations"] = request.annotations
+    try:
+        run = _get_run_store().update(run_id, **patch)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"run 不存在：{run_id}")
+    return run
+
+
+@app.delete("/api/rag/runs/{run_id}")
+def rag_run_delete(run_id: str) -> dict[str, Any]:
+    try:
+        removed = _get_run_store().delete(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"run 不存在：{run_id}")
+    return {"deleted": run_id}
+
+
 @app.put("/api/rag/papers/{paper_id}")
 async def rag_update(paper_id: str, request: PaperIngestRequest) -> dict[str, Any]:
     try:
         return await _get_rag().update_paper(
             paper_id=paper_id, title=request.title, abstract=request.abstract,
             content=request.content, authors=request.authors, tags=request.tags,
+            year=request.year, venue=request.venue,
         )
     except Exception as exc:
         logger.exception("文献更新失败")
@@ -296,8 +665,8 @@ async def rag_update(paper_id: str, request: PaperIngestRequest) -> dict[str, An
 
 
 @app.delete("/api/rag/papers/{paper_id}")
-def rag_delete(paper_id: str) -> dict[str, Any]:
-    ok = _get_rag().delete_paper(paper_id)
+async def rag_delete(paper_id: str) -> dict[str, Any]:
+    ok = await _get_rag().delete_paper(paper_id)
     if not ok:
         raise HTTPException(status_code=404, detail="文献未找到")
     return {"status": "deleted", "paper_id": paper_id}
@@ -306,7 +675,7 @@ def rag_delete(paper_id: str) -> dict[str, Any]:
 @app.post("/api/rag/reindex")
 async def rag_reindex() -> dict[str, Any]:
     try:
-        return await _get_rag().reindex()
+        return await _get_rag().reindex(papers_dir=_paper_manager.papers_dir)
     except Exception as exc:
         logger.exception("RAG 重建索引失败")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -561,6 +930,14 @@ def _get_orchestrator() -> PaperOrchestrator:
             provider=provider, model=defaults.model, workspace=_workspace,
         )
         _paper_orchestrator.set_manager(_paper_manager)
+
+        # 分析完成自动入库 RAG（分析产物 chunk），补齐 Web 上传路径缺口
+        def _on_analysis_complete(paper_id: str) -> None:
+            asyncio.create_task(
+                ingest_paper_analysis(_get_rag(), _paper_manager.papers_dir, paper_id)
+            )
+
+        _paper_orchestrator._on_analysis_complete = _on_analysis_complete
     return _paper_orchestrator
 
 

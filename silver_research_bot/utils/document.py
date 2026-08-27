@@ -15,6 +15,11 @@ except ImportError:
     PdfReader = None  # type: ignore
 
 try:
+    from PyPDF2 import PdfReader as PyPdf2Reader
+except ImportError:
+    PyPdf2Reader = None  # type: ignore
+
+try:
     from docx import Document as DocxDocument
 except ImportError:
     DocxDocument = None  # type: ignore
@@ -82,8 +87,8 @@ def extract_text(path: Path) -> str | None:
 
     # Document formats
     if ext == ".pdf":
-        if PdfReader is None:
-            return "[error: pypdf not installed]"
+        if PdfReader is None and PyPdf2Reader is None:
+            return "[error: pypdf/PyPDF2 not installed]"
         return _extract_pdf(path)
     elif ext == ".docx":
         if DocxDocument is None:
@@ -108,9 +113,12 @@ def extract_text(path: Path) -> str | None:
 
 
 def _extract_pdf(path: Path) -> str:
-    """Extract text from PDF using pypdf."""
+    """Extract text from PDF using pypdf (PyPDF2 fallback)."""
     try:
-        reader = PdfReader(path)
+        reader_cls = PdfReader or PyPdf2Reader
+        if reader_cls is None:
+            return "[error: pypdf/PyPDF2 not installed]"
+        reader = reader_cls(path)
         pages: list[str] = []
         for i, page in enumerate(reader.pages, 1):
             text = page.extract_text() or ""

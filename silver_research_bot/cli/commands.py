@@ -703,6 +703,9 @@ def _run_gateway(
         session_ttl_minutes=config.agents.defaults.session_ttl_minutes,
         tools_config=config.tools,
         paper_memory_mode=config.agents.defaults.memory.paper_memory_mode,
+        rag_config=config.rag,
+        rag_tools_config=config.rag_tools,
+        paper_search_config=config.paper_search,
     )
 
     # Paper memory mode: create PaperKnowledgeIndex and attach to context
@@ -716,10 +719,11 @@ def _run_gateway(
         )
         paper_knowledge = PaperKnowledgeIndex(
             papers_dir=config.workspace_path / "papers",
-            embedder=embedder,
             cache_dir=agent.context.memory.memory_dir / "paper_embeddings",
         )
         agent.context.paper_knowledge = paper_knowledge
+        # 注册 RAG 工具（延迟到 paper_knowledge 挂载之后）
+        agent.register_rag_tools()
         # 补全 ResearchContextTracker 的 paper_knowledge 引用
         if agent.research_tracker:
             agent.research_tracker.paper_knowledge = paper_knowledge
