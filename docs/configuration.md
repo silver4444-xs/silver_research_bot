@@ -1,6 +1,6 @@
 # Configuration
 
-Config file: `~/.silver-research-bot/config.json`
+Config file: `~/.silver_research_bot/config.json`
 
 > [!NOTE]
 > If your config file is older than the current schema, you can refresh it without overwriting your existing values:
@@ -108,7 +108,7 @@ No `providers.openaiCodex` block is needed in `config.json`; `silver-research-bo
 silver-research-bot provider login openai-codex
 ```
 
-**2. Set model** (merge into `~/.silver-research-bot/config.json`):
+**2. Set model** (merge into `~/.silver_research_bot/config.json`):
 ```json
 {
   "agents": {
@@ -124,10 +124,10 @@ silver-research-bot provider login openai-codex
 silver-research-bot agent -m "Hello!"
 
 # Target a specific workspace/config locally
-silver-research-bot agent -c ~/.silver-research-bot-telegram/config.json -m "Hello!"
+silver-research-bot agent -c ~/.silver_research_bot-telegram/config.json -m "Hello!"
 
 # One-off workspace override on top of that config
-silver-research-bot agent -c ~/.silver-research-bot-telegram/config.json -w /tmp/silver-research-bot-telegram-test -m "Hello!"
+silver-research-bot agent -c ~/.silver_research_bot-telegram/config.json -w /tmp/silver-research-bot-telegram-test -m "Hello!"
 ```
 
 > Docker users: use `docker run -it` for interactive OAuth login.
@@ -146,7 +146,7 @@ No `providers.githubCopilot` block is needed in `config.json`; `silver-research-
 silver-research-bot provider login github-copilot
 ```
 
-**2. Set model** (merge into `~/.silver-research-bot/config.json`):
+**2. Set model** (merge into `~/.silver_research_bot/config.json`):
 ```json
 {
   "agents": {
@@ -162,10 +162,10 @@ silver-research-bot provider login github-copilot
 silver-research-bot agent -m "Hello!"
 
 # Target a specific workspace/config locally
-silver-research-bot agent -c ~/.silver-research-bot-telegram/config.json -m "Hello!"
+silver-research-bot agent -c ~/.silver_research_bot-telegram/config.json -m "Hello!"
 
 # One-off workspace override on top of that config
-silver-research-bot agent -c ~/.silver-research-bot-telegram/config.json -w /tmp/silver-research-bot-telegram-test -m "Hello!"
+silver-research-bot agent -c ~/.silver_research_bot-telegram/config.json -w /tmp/silver-research-bot-telegram-test -m "Hello!"
 ```
 
 > Docker users: use `docker run -it` for interactive OAuth login.
@@ -231,7 +231,7 @@ Run a local model with Ollama, then add to config:
 ollama run llama3.2
 ```
 
-**2. Add to config** (partial �?merge into `~/.silver-research-bot/config.json`):
+**2. Add to config** (partial �?merge into `~/.silver_research_bot/config.json`):
 ```json
 {
   "providers": {
@@ -263,7 +263,7 @@ ollama run llama3.2
 - Load a model (e.g., Llama, Mistral, Qwen)
 - Click "Start Server" (default port: 1234)
 
-**2. Add to config** (partial �?merge into `~/.silver-research-bot/config.json`):
+**2. Add to config** (partial �?merge into `~/.silver_research_bot/config.json`):
 ```json
 {
   "providers": {
@@ -339,7 +339,7 @@ docker run -d \
   --target_device GPU
 ```
 
-**3. Add to config** (partial �?merge into `~/.silver-research-bot/config.json`):
+**3. Add to config** (partial �?merge into `~/.silver_research_bot/config.json`):
 
 ```json
 {
@@ -371,7 +371,7 @@ Run your own model with vLLM or any OpenAI-compatible server, then add to config
 vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 ```
 
-**2. Add to config** (partial �?merge into `~/.silver-research-bot/config.json`):
+**2. Add to config** (partial �?merge into `~/.silver_research_bot/config.json`):
 
 *Provider (set API key to null for local servers):*
 ```json
@@ -443,7 +443,7 @@ That's it! Environment variables, model routing, config matching, and `silver-re
 
 ## Channel Settings
 
-Global settings that apply to all channels. Configure under the `channels` section in `~/.silver-research-bot/config.json`:
+Global settings that apply to all channels. Configure under the `channels` section in `~/.silver_research_bot/config.json`:
 
 ```json
 {
@@ -492,7 +492,7 @@ When a channel `send()` raises, silver-research-bot retries at the channel-manag
 > { "tools": { "web": { "proxy": "http://127.0.0.1:7890" } } }
 > ```
 
-silver-research-bot supports multiple web search providers. Configure in `~/.silver-research-bot/config.json` under `tools.web.search`.
+silver-research-bot supports multiple web search providers. Configure in `~/.silver_research_bot/config.json` under `tools.web.search`.
 
 By default, web tools are enabled and web search uses `duckduckgo`, so search works out of the box without an API key.
 

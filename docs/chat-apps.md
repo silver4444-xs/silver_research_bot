@@ -65,7 +65,7 @@ Simply send this message to silver-research-bot (replace `xxx@xxx` with your rea
 Read https://raw.githubusercontent.com/HKUDS/MoChat/refs/heads/main/skills/silver-research-bot/skill.md and register on MoChat. My Email account is xxx@xxx Bind me as your owner and DM me on MoChat.
 ```
 
-silver-research-bot will automatically register, configure `~/.silver-research-bot/config.json`, and connect to Mochat.
+silver-research-bot will automatically register, configure `~/.silver_research_bot/config.json`, and connect to Mochat.
 
 **2. Restart gateway**
 
@@ -80,7 +80,7 @@ That's it â€?silver-research-bot handles the rest!
 <details>
 <summary>Manual configuration (advanced)</summary>
 
-If you prefer to configure manually, add the following to `~/.silver-research-bot/config.json`:
+If you prefer to configure manually, add the following to `~/.silver_research_bot/config.json`:
 
 > Keep `claw_token` private. It should only be sent in `X-Claw-Token` header to your Mochat API endpoint.
 
@@ -275,7 +275,7 @@ silver-research-bot gateway
 
 > WhatsApp bridge updates are not applied automatically for existing installations.
 > After upgrading silver-research-bot, rebuild the local bridge with:
-> `rm -rf ~/.silver-research-bot/bridge && silver-research-bot channels login whatsapp`
+> `rm -rf ~/.silver_research_bot/bridge && silver-research-bot channels login whatsapp`
 
 </details>
 

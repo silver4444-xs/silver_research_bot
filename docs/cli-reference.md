@@ -2,7 +2,7 @@
 
 | Command | Description |
 |---------|-------------|
-| `silver-research-bot onboard` | Initialize config & workspace at `~/.silver-research-bot/` |
+| `silver-research-bot onboard` | Initialize config & workspace at `~/.silver_research_bot/` |
 | `silver-research-bot onboard --wizard` | Launch the interactive onboarding wizard |
 | `silver-research-bot onboard -c <config> -w <workspace>` | Initialize or refresh a specific instance config and workspace |
 | `silver-research-bot agent -m "..."` | Chat with the agent |

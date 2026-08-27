@@ -158,7 +158,7 @@ silver-research-bot plugins list      # verify "Webhook" shows as "plugin"
 silver-research-bot onboard           # auto-adds default config for detected plugins
 ```
 
-Edit `~/.silver-research-bot/config.json`:
+Edit `~/.silver_research_bot/config.json`:
 
 ```json
 {

@@ -46,14 +46,14 @@ silver-research-bot --version
 **Using WhatsApp?** Rebuild the local bridge after upgrading:
 
 ```bash
-rm -rf ~/.silver-research-bot/bridge
+rm -rf ~/.silver_research_bot/bridge
 silver-research-bot channels login whatsapp
 ```
 
 ## Quick Start
 
 > [!TIP]
-> Set your API key in `~/.silver-research-bot/config.json`.
+> Set your API key in `~/.silver_research_bot/config.json`.
 > Get API keys: [OpenRouter](https://openrouter.ai/keys) (Global)
 >
 > For other LLM providers, please see [`configuration.md`](./configuration.md).
@@ -68,7 +68,7 @@ silver-research-bot onboard
 
 Use `silver-research-bot onboard --wizard` if you want the interactive setup wizard.
 
-**2. Configure** (`~/.silver-research-bot/config.json`)
+**2. Configure** (`~/.silver_research_bot/config.json`)
 
 Configure these **two parts** in your config (other options have defaults).
 

@@ -10,26 +10,26 @@ If you want each instance to have its own dedicated workspace from the start, pa
 
 ```bash
 # Create separate instance configs and workspaces
-silver-research-bot onboard --config ~/.silver-research-bot-telegram/config.json --workspace ~/.silver-research-bot-telegram/workspace
-silver-research-bot onboard --config ~/.silver-research-bot-discord/config.json --workspace ~/.silver-research-bot-discord/workspace
-silver-research-bot onboard --config ~/.silver-research-bot-feishu/config.json --workspace ~/.silver-research-bot-feishu/workspace
+silver-research-bot onboard --config ~/.silver_research_bot-telegram/config.json --workspace ~/.silver_research_bot-telegram/workspace
+silver-research-bot onboard --config ~/.silver_research_bot-discord/config.json --workspace ~/.silver_research_bot-discord/workspace
+silver-research-bot onboard --config ~/.silver_research_bot-feishu/config.json --workspace ~/.silver_research_bot-feishu/workspace
 ```
 
 **Configure each instance:**
 
-Edit `~/.silver-research-bot-telegram/config.json`, `~/.silver-research-bot-discord/config.json`, etc. with different channel settings. The workspace you passed during `onboard` is saved into each config as that instance's default workspace.
+Edit `~/.silver_research_bot-telegram/config.json`, `~/.silver_research_bot-discord/config.json`, etc. with different channel settings. The workspace you passed during `onboard` is saved into each config as that instance's default workspace.
 
 **Run instances:**
 
 ```bash
 # Instance A - Telegram bot
-silver-research-bot gateway --config ~/.silver-research-bot-telegram/config.json
+silver-research-bot gateway --config ~/.silver_research_bot-telegram/config.json
 
 # Instance B - Discord bot
-silver-research-bot gateway --config ~/.silver-research-bot-discord/config.json
+silver-research-bot gateway --config ~/.silver_research_bot-discord/config.json
 
 # Instance C - Feishu bot with custom port
-silver-research-bot gateway --config ~/.silver-research-bot-feishu/config.json --port 18792
+silver-research-bot gateway --config ~/.silver_research_bot-feishu/config.json --port 18792
 ```
 
 ## Path Resolution
@@ -39,21 +39,21 @@ When using `--config`, silver-research-bot derives its runtime data directory fr
 To open a CLI session against one of these instances locally:
 
 ```bash
-silver-research-bot agent -c ~/.silver-research-bot-telegram/config.json -m "Hello from Telegram instance"
-silver-research-bot agent -c ~/.silver-research-bot-discord/config.json -m "Hello from Discord instance"
+silver-research-bot agent -c ~/.silver_research_bot-telegram/config.json -m "Hello from Telegram instance"
+silver-research-bot agent -c ~/.silver_research_bot-discord/config.json -m "Hello from Discord instance"
 
 # Optional one-off workspace override
-silver-research-bot agent -c ~/.silver-research-bot-telegram/config.json -w /tmp/silver-research-bot-telegram-test
+silver-research-bot agent -c ~/.silver_research_bot-telegram/config.json -w /tmp/silver-research-bot-telegram-test
 ```
 
 > `silver-research-bot agent` starts a local CLI agent using the selected workspace/config. It does not attach to or proxy through an already running `silver-research-bot gateway` process.
 
 | Component | Resolved From | Example |
 |-----------|---------------|---------|
-| **Config** | `--config` path | `~/.silver-research-bot-A/config.json` |
-| **Workspace** | `--workspace` or config | `~/.silver-research-bot-A/workspace/` |
-| **Cron Jobs** | config directory | `~/.silver-research-bot-A/cron/` |
-| **Media / runtime state** | config directory | `~/.silver-research-bot-A/media/` |
+| **Config** | `--config` path | `~/.silver_research_bot-A/config.json` |
+| **Workspace** | `--workspace` or config | `~/.silver_research_bot-A/workspace/` |
+| **Cron Jobs** | config directory | `~/.silver_research_bot-A/cron/` |
+| **Media / runtime state** | config directory | `~/.silver_research_bot-A/media/` |
 
 ## How It Works
 
@@ -73,7 +73,7 @@ Example config:
 {
   "agents": {
     "defaults": {
-      "workspace": "~/.silver-research-bot-telegram/workspace",
+      "workspace": "~/.silver_research_bot-telegram/workspace",
       "model": "anthropic/claude-sonnet-4-6"
     }
   },
@@ -93,8 +93,8 @@ Example config:
 Start separate instances:
 
 ```bash
-silver-research-bot gateway --config ~/.silver-research-bot-telegram/config.json
-silver-research-bot gateway --config ~/.silver-research-bot-discord/config.json
+silver-research-bot gateway --config ~/.silver_research_bot-telegram/config.json
+silver-research-bot gateway --config ~/.silver_research_bot-discord/config.json
 ```
 
 Each gateway instance also exposes a lightweight HTTP health endpoint on
@@ -108,7 +108,7 @@ public or LAN-facing address.
 Override workspace for one-off runs when needed:
 
 ```bash
-silver-research-bot gateway --config ~/.silver-research-bot-telegram/config.json --workspace /tmp/silver-research-bot-telegram-test
+silver-research-bot gateway --config ~/.silver_research_bot-telegram/config.json --workspace /tmp/silver-research-bot-telegram-test
 ```
 
 ## Common Use Cases

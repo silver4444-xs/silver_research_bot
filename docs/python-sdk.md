@@ -19,7 +19,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`silver-research-bot.from_config()` reuses your normal `~/.silver-research-bot/config.json`, so the SDK follows the same provider, model, tools, and workspace defaults as the CLI unless you override them.
+`silver-research-bot.from_config()` reuses your normal `~/.silver_research_bot/config.json`, so the SDK follows the same provider, model, tools, and workspace defaults as the CLI unless you override them.
 
 ## Common Patterns
 
@@ -29,7 +29,7 @@ asyncio.run(main())
 from silver_research_bot import silver_research_bot
 
 bot = silver-research-bot.from_config(
-    config_path="~/.silver-research-bot/config.json",
+    config_path="~/.silver_research_bot/config.json",
     workspace="/my/project",
 )
 ```
@@ -68,7 +68,7 @@ Create a `silver-research-bot` instance from a config file.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `config_path` | `str \| Path \| None` | `None` | Path to `config.json`. Defaults to `~/.silver-research-bot/config.json`. |
+| `config_path` | `str \| Path \| None` | `None` | Path to `config.json`. Defaults to `~/.silver_research_bot/config.json`. |
 | `workspace` | `str \| Path \| None` | `None` | Override the workspace directory from config. |
 
 Raises `FileNotFoundError` if an explicit config path does not exist.
