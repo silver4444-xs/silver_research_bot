@@ -41,20 +41,30 @@ keywords = [
 ]
 dependencies = [
   "fastapi>=0.115.0",
-  "uvicorn[standard]>=0.30.0",
   "pydantic>=2.8.0",
   "pydantic-settings>=2.4.0",
   "loguru>=0.7.2",
-  "typer>=0.12.3",
-  "aiofiles>=24.1.0",
+  "PyYAML>=6.0",
   "numpy>=1.26.0",
   "filelock>=3.13.0",
+  "json-repair>=0.25.0",
+  "httpx>=0.27.0",
   "tiktoken>=0.6.0",
+  "Jinja2>=3.1.0",
+  "openai>=1.50.0",
+  "anthropic>=0.40.0",
+  "PyMuPDF>=1.23.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3.0", "httpx>=0.27.0"]
-web = []
+dev = ["pytest>=8.3.0", "httpx>=0.27.0", "ruff>=0.6.0"]
+channels = ["discord.py", "dingtalk-stream", "lark-oapi", "qq-botpy", "matrix-nio", "websockets", "nh3", "mistune", "msgpack", "qrcode", "pycryptodome", "cryptography", "PyJWT", "aiohttp"]
+office = ["pypdf", "PyPDF2", "python-docx", "openpyxl", "python-pptx"]
+tracing = ["langfuse", "langsmith"]
+mcp = ["mcp"]
+cli = ["typer", "rich", "prompt-toolkit", "questionary"]
+server = ["uvicorn[standard]", "aiofiles", "python-multipart"]
+all = ["pytest>=8.3.0", "httpx>=0.27.0", "ruff>=0.6.0", "discord.py", "dingtalk-stream", "lark-oapi", "qq-botpy", "matrix-nio", "websockets", "nh3", "mistune", "msgpack", "qrcode", "pycryptodome", "cryptography", "PyJWT", "aiohttp", "pypdf", "PyPDF2", "python-docx", "openpyxl", "python-pptx", "langfuse", "langsmith", "mcp", "typer", "rich", "prompt-toolkit", "questionary", "uvicorn[standard]", "aiofiles", "python-multipart"]
 
 [tool.setuptools]
 packages = ["silver_research_bot"]
@@ -64,11 +74,23 @@ include-package-data = true
 "silver_research_bot" = ["py.typed"]
 
 [project.urls]
-Homepage = "https://github.com/HKUDS/silver-research-bot"
-Repository = "https://github.com/HKUDS/silver-research-bot"
-Documentation = "https://silver-research-bot.wiki"
-"Issue Tracker" = "https://github.com/HKUDS/silver-research-bot/issues"
-Changelog = "https://github.com/HKUDS/silver-research-bot/blob/main/docs/changelog/CHANGELOG.md"
+Homepage = "https://github.com/silver4444-xs/silver_research_bot"
+Repository = "https://github.com/silver4444-xs/silver_research_bot"
+Documentation = "https://github.com/silver4444-xs/silver_research_bot/tree/main/docs"
+"Issue Tracker" = "https://github.com/silver4444-xs/silver_research_bot/issues"
+Changelog = "https://github.com/silver4444-xs/silver_research_bot/blob/main/CHANGELOG.md"
 
 [tool.pytest.ini_options]
 addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.coverage.run]
+source = ["silver_research_bot"]
+omit = ["tests/*"]
