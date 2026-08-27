@@ -72,7 +72,7 @@ docker run -p 8765:8765 --env-file .env silver-research-bot
 
 1. **ReAct Agent** — LLM ↔ 工具交替调用，中轮注入，崩溃自动恢复，流式输出
 2. **艾宾浩斯记忆** — `R = e^(-t/S)` 遗忘曲线，7 天半衰期，语义冲突检测，Dream 后台整合
-3. **混合 RAG** — BM25 + 向量 + Cross-Encoder 三级检索，支持公式/图表/表格多模态过滤
+3. **混合 RAG** — 查询扩展 + BM25/向量双路召回 + RRF 融合 + Cross-Encoder 重排，支持标签/作者/年份/出处过滤
 4. **多 Agent 协作** — 翻译员 + 分析员 + 审计员通过异步 MessageBus 协同工作
 5. **30+ LLM Provider** — OpenAI · Anthropic · DeepSeek · 智谱 · 通义 · Kimi · Gemini · Groq 等，自动检测 + 智能重试
 6. **14 个聊天通道** — 微信 · 企业微信 · 钉钉 · 飞书 · QQ · Telegram · Discord · Slack · WhatsApp · Matrix · MoChat · Email · MS Teams · WebSocket

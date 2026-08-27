@@ -3,20 +3,18 @@
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': { 'fontSize':'13px','fontFamily':'system-ui, sans-serif' }}}%%
 flowchart LR
-    Q(["🔍 用户查询"]):::entry --> PARSE["查询意图解析<br/>关键词提取 + 实体识别"]:::process
+    Q(["🔍 用户查询"]):::entry --> EXPAND["查询扩展<br/>LLM 生成 N 条语义等价改写<br/>无 provider 时走离线同义词表"]:::process
 
-    PARSE --> BM25["BM25 关键词检索<br/>Top-20 粗排"]:::analysis
-    PARSE --> VEC["语义向量检索<br/>Top-20 并行"]:::analysis
-    PARSE --> KG["实体关系推理<br/>知识图谱扩展"]:::analysis
+    EXPAND --> BM25["BM25 关键词召回<br/>每条 query Top-20"]:::analysis
+    EXPAND --> VEC["语义向量召回<br/>每条 query Top-20"]:::analysis
 
-    BM25 --> FUSE["加权融合排序<br/>0.3 × BM25 + 0.7 × 向量<br/>Min-max 归一化"]:::output
+    BM25 --> FUSE["RRF 倒数秩融合<br/>跨 多query × 双通道 累加<br/>归一化到 0~1"]:::output
     VEC --> FUSE
-    KG --> FUSE
 
-    FUSE --> RERANK["Cross-Encoder 重排序<br/>LLM 精排 → Top-5"]:::done
+    FUSE --> FILTER["阈值 + 元数据过滤<br/>min_score · tag · author · year · venue · modality"]:::output
 
-    RERANK --> FILTER["多模态过滤<br/>文本 | 公式 | 图表 | 表格"]:::output
-    FILTER --> RESULT(["📋 返回检索结果"]):::done
+    FILTER --> RERANK["Cross-Encoder 重排序<br/>LLM 精排 → Top-5<br/>失败则维持融合序"]:::done
+    RERANK --> RESULT(["📋 返回检索结果"]):::done
 
     classDef entry fill:#3b82f6,stroke:#2563eb,color:#fff,stroke-width:2px
     classDef process fill:#6366f1,stroke:#4f46e5,color:#fff,stroke-width:2px

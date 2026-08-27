@@ -934,9 +934,10 @@ Core agent behavior and LLM settings.
   "rag": {
     "embeddingModel": "text-embedding-3-small",
     "embeddingDimensions": 1536,
-    "bm25Weight": 0.3, "vectorWeight": 0.7,
     "coarseTopK": 20, "finalTopK": 5,
-    "rerankEnabled": true
+    "rerankEnabled": true,
+    "chunkSize": 800, "chunkOverlap": 25,
+    "minScore": 0.0
   }
 }
 ```
@@ -945,11 +946,23 @@ Core agent behavior and LLM settings.
 |--------|---------|-------------|
 | `rag.embeddingModel` | `"text-embedding-3-small"` | Embedding model |
 | `rag.embeddingDimensions` | `1536` | Vector dimensions |
-| `rag.bm25Weight` | `0.3` | BM25 keyword weight in fusion |
-| `rag.vectorWeight` | `0.7` | Vector similarity weight in fusion |
 | `rag.coarseTopK` | `20` | Coarse candidate pool size |
 | `rag.finalTopK` | `5` | Final results after LLM re-ranking |
 | `rag.rerankEnabled` | `true` | Enable LLM cross-encoder re-rank |
+| `rag.chunkSize` | `800` | Chunk budget in **tokens** (tiktoken `cl100k_base`) |
+| `rag.chunkOverlap` | `25` | Chunk overlap in **tokens** (whitespace-delimited) |
+| `rag.minScore` | `0.0` | Drop hits below this RRF-normalised score (`[0,1]`, `0` = no filter) |
+
+> Fusion is **RRF** (`Σ 1/(60+rank)`), a rank-based scheme with no per-channel
+> weights — `bm25Weight` / `vectorWeight` were removed. Changing `chunkSize` or
+> `chunkOverlap` changes the content-addressed `chunk_id`, so an existing corpus
+> needs `POST /api/rag/reindex` afterwards.
+>
+> Additional keys not listed above: `embedCacheEnabled`, `rerankModel`,
+> `rerankCacheTtlSeconds`, `rerankCacheMaxEntries`, `rerankMaxTokens`,
+> `rerankCandidateMaxChars`, `queryExpansionEnabled`, `queryExpansionCount`,
+> `queryExpansionCacheTtlSeconds`, `queryExpansionCacheMaxEntries` —
+> see `config/schema.py::RAGConfig` for defaults and bounds.
 
 ## Research Engine
 
