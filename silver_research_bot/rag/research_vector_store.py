@@ -40,6 +40,14 @@ class VectorStore:
         if self._tomb_path.exists():
             self._tombstones = set(json.loads(self._tomb_path.read_text(encoding="utf-8")))
 
+    def reload(self) -> None:
+        """从磁盘重新加载（供跨实例 sync 时刷新被外部改动过的存储）。"""
+        self._ids = []
+        self._meta = {}
+        self._embeddings = None
+        self._tombstones = set()
+        self._load()
+
     def _save(self) -> None:
         np.save(str(self._np_path), self._embeddings)
         with open(self._ids_path, "wb") as f:

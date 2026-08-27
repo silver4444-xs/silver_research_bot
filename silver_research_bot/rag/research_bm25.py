@@ -6,11 +6,26 @@ import math
 import re
 from typing import Any
 
-_TOKEN_RE = re.compile(r"[\w一-鿿]+")
+_TOKEN_RE = re.compile(r"[a-z0-9_]+")
+_CJK_RE = re.compile(r"[一-鿿]+")
 
 
 def _tokenize(text: str) -> list[str]:
-    return _TOKEN_RE.findall(text.lower())
+    """分词：拉丁走词级，CJK 走单字 + 重叠 bigram（无外部依赖，提升中文召回）。"""
+    text = text.lower()
+    tokens: list[str] = []
+    pos = 0
+    for m in _CJK_RE.finditer(text):
+        if m.start() > pos:
+            tokens.extend(_TOKEN_RE.findall(text[pos:m.start()]))
+        run = m.group()
+        tokens.extend(run)  # 单字
+        if len(run) >= 2:
+            tokens.extend(run[i:i + 2] for i in range(len(run) - 1))  # 重叠 bigram
+        pos = m.end()
+    if pos < len(text):
+        tokens.extend(_TOKEN_RE.findall(text[pos:]))
+    return tokens
 
 
 class BM25Scorer:
@@ -19,7 +34,7 @@ class BM25Scorer:
     def __init__(self, k1: float = 1.5, b: float = 0.75):
         self.k1 = k1
         self.b = b
-        self._docs: list[dict[str, Any]] = []  # [{id, tokens, doc_len}]
+        self._docs: dict[str, dict[str, Any]] = {}  # doc_id -> {id, tokens, doc_len}
         self._doc_len_sum: float = 0.0
         self._tf: dict[str, dict[str, int]] = {}  # term -> {doc_id -> freq}
         self._df: dict[str, int] = {}  # document frequency per term
@@ -43,7 +58,9 @@ class BM25Scorer:
 
     def add(self, doc_id: str, text: str) -> None:
         tokens = _tokenize(text)
-        self._docs.append({"id": doc_id, "tokens": tokens, "doc_len": len(tokens)})
+        if doc_id in self._docs:
+            self.remove(doc_id)  # 幂等：重复 add 同 doc_id 先清旧索引，防 _df 重复计数
+        self._docs[doc_id] = {"id": doc_id, "tokens": tokens, "doc_len": len(tokens)}
         self._doc_len_sum += len(tokens)
         seen: set[str] = set()
         for term in tokens:
@@ -55,7 +72,11 @@ class BM25Scorer:
                 self._df[term] = self._df.get(term, 0) + 1
 
     def remove(self, doc_id: str) -> None:
-        self._docs = [d for d in self._docs if d["id"] != doc_id]
+        doc = self._docs.get(doc_id)
+        if doc is None:
+            return
+        self._doc_len_sum -= doc["doc_len"]
+        del self._docs[doc_id]
         for term in list(self._tf):
             if doc_id in self._tf[term]:
                 self._df[term] -= 1
@@ -63,7 +84,6 @@ class BM25Scorer:
                 if self._df[term] <= 0:
                     del self._df[term]
                     del self._tf[term]
-        self._doc_len_sum = sum(d["doc_len"] for d in self._docs)
 
     def score(self, query: str) -> list[tuple[str, float]]:
         """返回 [(doc_id, score), ...] 按分数降序排列。"""
@@ -80,7 +100,7 @@ class BM25Scorer:
                 continue
             idf = math.log(1 + (N - df + 0.5) / (df + 0.5))
             for doc_id, tf in self._tf.get(term, {}).items():
-                doc_entry = next((d for d in self._docs if d["id"] == doc_id), None)
+                doc_entry = self._docs.get(doc_id)
                 if doc_entry is None:
                     continue
                 dl = doc_entry["doc_len"]
