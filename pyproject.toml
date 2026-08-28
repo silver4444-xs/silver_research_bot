@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "silver-research-bot-ai"
+name = "silver-research-bot"
 version = "0.7.0"
 description = "Autonomous AI research assistant with FastAPI backend and Vue web UI"
 readme = "README.md"

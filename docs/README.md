@@ -66,7 +66,5 @@ graph TD
 
 ## 快速链接
 
-- **GitHub**: [github.com/HKUDS/silver-research-bot](https://github.com/HKUDS/silver-research-bot)
-- **Wiki 文档站**: [silver-research-bot.wiki](https://silver-research-bot.wiki)
-- **PyPI**: [pypi.org/project/silver-research-bot-ai](https://pypi.org/project/silver-research-bot-ai/)
+- **GitHub**: [github.com/silver4444-xs/silver_research_bot](https://github.com/silver4444-xs/silver_research_bot)
 - **版本历史**: [CHANGELOG.md](./changelog/CHANGELOG.md)

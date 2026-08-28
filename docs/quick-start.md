@@ -10,21 +10,21 @@
 **Install from source** (latest features, experimental changes may land here first; recommended for development)
 
 ```bash
-git clone https://github.com/HKUDS/silver-research-bot.git
-cd silver-research-bot
+git clone https://github.com/silver4444-xs/silver_research_bot.git
+cd silver_research_bot
 pip install -e .
 ```
 
 **Install with [uv](https://github.com/astral-sh/uv)** (stable release, fast)
 
 ```bash
-uv tool install silver-research-bot-ai
+uv tool install silver-research-bot
 ```
 
 **Install from PyPI** (stable release)
 
 ```bash
-pip install silver-research-bot-ai
+pip install silver-research-bot
 ```
 
 ### Update to latest version
@@ -32,14 +32,14 @@ pip install silver-research-bot-ai
 **PyPI / pip**
 
 ```bash
-pip install -U silver-research-bot-ai
+pip install -U silver-research-bot
 silver-research-bot --version
 ```
 
 **uv**
 
 ```bash
-uv tool upgrade silver-research-bot-ai
+uv tool upgrade silver-research-bot
 silver-research-bot --version
 ```
 
@@ -83,7 +83,7 @@ Configure these **two parts** in your config (other options have defaults).
 }
 ```
 
-*Set your model* (optionally pin a provider â€?defaults to auto-detection):
+*Set your model* (optionally pin a provider ï¿½?defaults to auto-detection):
 ```json
 {
   "agents": {

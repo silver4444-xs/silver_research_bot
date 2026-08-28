@@ -4,12 +4,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/HKUDS/silver-research-bot/stargazers"><img src="https://img.shields.io/github/stars/HKUDS/silver-research-bot?style=social" /></a>
-  <a href="https://pypi.org/project/silver-research-bot-ai/"><img src="https://img.shields.io/pypi/v/silver-research-bot-ai?label=pypi" /></a>
+  <a href="https://github.com/silver4444-xs/silver_research_bot/stargazers"><img src="https://img.shields.io/github/stars/silver4444-xs/silver_research_bot?style=social" /></a>
   <img src="https://img.shields.io/badge/Python-3.11+-blue" />
   <img src="https://img.shields.io/badge/License-MIT-yellow" />
-  <a href="https://silver-research-bot.wiki"><img src="https://img.shields.io/badge/文档-Wiki-green" /></a>
-  <a href="https://discord.gg/your-invite"><img src="https://img.shields.io/badge/Discord-社区-purple" /></a>
+  <a href="./docs/README.md"><img src="https://img.shields.io/badge/文档-docs-green" /></a>
+  <img src="https://github.com/silver4444-xs/silver_research_bot/actions/workflows/ci.yml/badge.svg" alt="CI" />
 </p>
 
 ---
@@ -31,8 +30,10 @@
 ## 🚀 快速开始
 
 ```bash
-pip install silver-research-bot-ai
+git clone https://github.com/silver4444-xs/silver_research_bot && cd silver_research_bot
+pip install -e ".[dev]"
 cp .env.example .env              # 填入 API Key（兼容 OpenAI / DeepSeek / 智谱 等任意接口）
+cp config.example.json ~/.silver_research_bot/config.json   # 关键：否则 key 不生效
 uvicorn silver_research_bot.research_app:app --port 8765
 ```
 
@@ -43,7 +44,7 @@ uvicorn silver_research_bot.research_app:app --port 8765
 
 ```bash
 # 源码安装
-git clone https://github.com/HKUDS/silver-research-bot && cd silver_research_bot
+git clone https://github.com/silver4444-xs/silver_research_bot && cd silver_research_bot
 pip install -e ".[dev]" && cp .env.example .env
 uvicorn silver_research_bot.research_app:app --reload --port 8765
 
@@ -351,21 +352,21 @@ flowchart TD
 
 | 入门 | 进阶 | 开发 |
 |------|------|------|
-| [快速开始](https://silver-research-bot.wiki/quick-start) | [配置指南](https://silver-research-bot.wiki/configuration) | [Python SDK](https://silver-research-bot.wiki/python-sdk) |
-| [用户指南](https://silver-research-bot.wiki/user-guide) | [记忆系统](https://silver-research-bot.wiki/memory) | [通道开发](https://silver-research-bot.wiki/channel-plugin-guide) |
-| [研究助手](https://silver-research-bot.wiki/research-assistant) | [部署指南](https://silver-research-bot.wiki/deployment) | [API 参考](https://silver-research-bot.wiki/api) |
+| [快速开始](./docs/quick-start.md) | [配置指南](./docs/configuration.md) | [Python SDK](./docs/python-sdk.md) |
+| [用户指南](./docs/用户指南.md) | [记忆系统](./docs/memory.md) | [通道开发](./docs/channel-plugin-guide.md) |
+| [研究助手](./docs/research-assistant.md) | [部署指南](./docs/deployment.md) | [API 参考](./docs/API参考.md) |
 
-完整文档站：[silver-research-bot.wiki](https://silver-research-bot.wiki)
+完整文档站：[docs/README.md](./docs/README.md)
 
 ---
 
 ## ⭐ 社区
 
-[![Star History Chart](https://api.star-history.com/svg?repos=HKUDS/silver-research-bot&type=Date)](https://star-history.com/#HKUDS/silver-research-bot&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=silver4444-xs/silver_research_bot&type=Date)](https://star-history.com/#silver4444-xs/silver_research_bot&Date)
 
-- **Bug 报告**：[GitHub Issues](https://github.com/HKUDS/silver-research-bot/issues)
-- **功能建议**：[GitHub Discussions](https://github.com/HKUDS/silver-research-bot/discussions)
-- **贡献前请阅读**：[CLAUDE.md](CLAUDE.md)
+- **Bug 报告**：[GitHub Issues](https://github.com/silver4444-xs/silver_research_bot/issues)
+- **功能建议**：[GitHub Discussions](https://github.com/silver4444-xs/silver_research_bot/discussions)
+- **贡献前请阅读**：[CONTRIBUTING.md](CONTRIBUTING.md)
 
 ---
 
@@ -373,14 +374,14 @@ flowchart TD
 
 ```bibtex
 @software{silver_research_bot,
-  author  = {HKUDS},
+  author  = {Silver Research Bot contributors},
   title   = {Silver Research Bot: AI-Powered Deep Paper Analysis Agent},
   year    = {2026},
-  url     = {https://github.com/HKUDS/silver-research-bot},
+  url     = {https://github.com/silver4444-xs/silver_research_bot},
   note    = {MIT License}
 }
 ```
 
 <p align="center">
-  <sub>MIT License · Built with ❤️ by HKUDS</sub>
+  <sub>MIT License · Built with ❤️ by the Silver Research Bot community</sub>
 </p>

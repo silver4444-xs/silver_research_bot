@@ -22,8 +22,8 @@ We'll build a minimal webhook channel that receives messages via HTTP POST and s
 ```text
 silver-research-bot-channel-webhook/
 â”œâ”€â”€ silver-research-bot_channel_webhook/
-â”?  â”œâ”€â”€ __init__.py          # re-export WebhookChannel
-â”?  â””â”€â”€ channel.py           # channel implementation
+ï¿½?  â”œâ”€â”€ __init__.py          # re-export WebhookChannel
+ï¿½?  â””â”€â”€ channel.py           # channel implementation
 â””â”€â”€ pyproject.toml
 ```
 
@@ -100,10 +100,10 @@ class WebhookChannel(BaseChannel):
     async def send(self, msg: OutboundMessage) -> None:
         """Deliver an outbound message.
 
-        msg.content  â€?markdown text (convert to platform format as needed)
-        msg.media    â€?list of local file paths to attach
-        msg.chat_id  â€?the recipient (same chat_id you passed to _handle_message)
-        msg.metadata â€?may contain "_progress": True for streaming chunks
+        msg.content  ï¿½?markdown text (convert to platform format as needed)
+        msg.media    ï¿½?list of local file paths to attach
+        msg.chat_id  ï¿½?the recipient (same chat_id you passed to _handle_message)
+        msg.metadata ï¿½?may contain "_progress": True for streaming chunks
         """
         logger.info("[webhook] -> {}: {}", msg.chat_id, msg.content[:80])
         # In a real plugin: POST to a callback URL, send via SDK, etc.
@@ -135,7 +135,7 @@ class WebhookChannel(BaseChannel):
 [project]
 name = "silver-research-bot-channel-webhook"
 version = "0.1.0"
-dependencies = ["silver-research-bot-ai", "aiohttp"]
+dependencies = ["silver-research-bot", "aiohttp"]
 
 [project.entry-points."silver-research-bot.channels"]
 webhook = "silver-research-bot_channel_webhook:WebhookChannel"
@@ -252,7 +252,7 @@ silver-research-bot channels login <channel_name> --force  # re-authenticate
 class OutboundMessage:
     channel: str        # your channel name
     chat_id: str        # recipient (same value you passed to _handle_message)
-    content: str        # markdown text â€?convert to platform format as needed
+    content: str        # markdown text ï¿½?convert to platform format as needed
     media: list[str]    # local file paths to attach (images, audio, docs)
     metadata: dict      # may contain: "_progress" (bool) for streaming chunks,
                         #              "message_id" for reply threading
@@ -260,7 +260,7 @@ class OutboundMessage:
 
 ## Streaming Support
 
-Channels can opt into real-time streaming â€?the agent sends content token-by-token instead of one final message. This is entirely optional; channels work fine without it.
+Channels can opt into real-time streaming ï¿½?the agent sends content token-by-token instead of one final message. This is entirely optional; channels work fine without it.
 
 ### How It Works
 
@@ -280,10 +280,10 @@ async def send_delta(self, chat_id: str, delta: str, metadata: dict[str, Any] | 
     meta = metadata or {}
 
     if meta.get("_stream_end"):
-        # Streaming finished â€?do final formatting, cleanup, etc.
+        # Streaming finished ï¿½?do final formatting, cleanup, etc.
         return
 
-    # Regular delta â€?append text, update the message on screen
+    # Regular delta ï¿½?append text, update the message on screen
     # delta contains a small chunk of text (a few tokens)
 ```
 
@@ -311,17 +311,17 @@ class WebhookChannel(BaseChannel):
         meta = metadata or {}
         if meta.get("_stream_end"):
             text = self._buffers.pop(chat_id, "")
-            # Final delivery â€?format and send the complete message
+            # Final delivery ï¿½?format and send the complete message
             await self._deliver(chat_id, text, final=True)
             return
 
         self._buffers.setdefault(chat_id, "")
         self._buffers[chat_id] += delta
-        # Incremental update â€?push partial text to the client
+        # Incremental update ï¿½?push partial text to the client
         await self._deliver(chat_id, self._buffers[chat_id], final=False)
 
     async def send(self, msg: OutboundMessage) -> None:
-        # Non-streaming path â€?unchanged
+        # Non-streaming path ï¿½?unchanged
         await self._deliver(msg.chat_id, msg.content, final=True)
 ```
 
@@ -341,7 +341,7 @@ Enable streaming per channel:
 }
 ```
 
-When `streaming` is `false` (default) or omitted, only `send()` is called â€?no streaming overhead.
+When `streaming` is `false` (default) or omitted, only `send()` is called ï¿½?no streaming overhead.
 
 ### BaseChannel Streaming API
 
@@ -354,7 +354,7 @@ When `streaming` is `false` (default) or omitted, only `send()` is called â€?no 
 
 ### Why Pydantic model is required
 
-`BaseChannel.is_allowed()` reads the permission list via `getattr(self.config, "allow_from", [])`. This works for Pydantic models where `allow_from` is a real Python attribute, but **fails silently for plain `dict`** â€?`dict` has no `allow_from` attribute, so `getattr` always returns the default `[]`, causing all messages to be denied.
+`BaseChannel.is_allowed()` reads the permission list via `getattr(self.config, "allow_from", [])`. This works for Pydantic models where `allow_from` is a real Python attribute, but **fails silently for plain `dict`** ï¿½?`dict` has no `allow_from` attribute, so `getattr` always returns the default `[]`, causing all messages to be denied.
 
 Built-in channels use Pydantic config models (subclassing `Base` from `silver-research-bot.config.schema`). Plugin channels **must do the same**.
 
@@ -375,7 +375,7 @@ class WebhookConfig(Base):
 
 `Base` is configured with `alias_generator=to_camel` and `populate_by_name=True`, so JSON keys like `"allowFrom"` and `"allow_from"` are both accepted.
 
-2. Convert `dict` â†?model in `__init__`:
+2. Convert `dict` ï¿½?model in `__init__`:
 
 ```python
 from typing import Any
@@ -396,7 +396,7 @@ async def start(self) -> None:
     token = self.config.token
 ```
 
-`allowFrom` is handled automatically by `_handle_message()` â€?you don't need to check it yourself.
+`allowFrom` is handled automatically by `_handle_message()` ï¿½?you don't need to check it yourself.
 
 Override `default_config()` so `silver-research-bot onboard` auto-populates `config.json`:
 
@@ -406,7 +406,7 @@ def default_config(cls) -> dict[str, Any]:
     return WebhookConfig().model_dump(by_alias=True)
 ```
 
-> **Note:** `default_config()` returns a plain `dict` (not a Pydantic model) because it's used to serialize into `config.json`. The recommended way is to instantiate your config model and call `model_dump(by_alias=True)` â€?this automatically uses camelCase keys (`allowFrom`) and keeps defaults in a single source of truth.
+> **Note:** `default_config()` returns a plain `dict` (not a Pydantic model) because it's used to serialize into `config.json`. The recommended way is to instantiate your config model and call `model_dump(by_alias=True)` ï¿½?this automatically uses camelCase keys (`allowFrom`) and keeps defaults in a single source of truth.
 
 If not overridden, the base class returns `{"enabled": false}`.
 

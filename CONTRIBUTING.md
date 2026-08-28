@@ -5,7 +5,7 @@ Thanks for your interest in contributing! This document outlines the process for
 ## Development Setup
 
 ```bash
-git clone https://github.com/HKUDS/silver-research-bot
+git clone https://github.com/silver4444-xs/silver_research_bot
 cd silver_research_bot
 pip install -e ".[dev]"
 cp .env.example .env
@@ -34,4 +34,4 @@ cp .env.example .env
 
 ## Project Structure
 
-See the [README](README.md#-项目结构) for a complete directory tree and module descriptions.
+See the [project documentation](docs/README.md) for a complete directory tree and module descriptions.

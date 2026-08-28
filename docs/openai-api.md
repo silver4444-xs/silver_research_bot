@@ -3,7 +3,7 @@
 silver-research-bot can expose a minimal OpenAI-compatible endpoint for local integrations:
 
 ```bash
-pip install "silver-research-bot-ai[api]"
+pip install "silver-research-bot[api]"
 silver-research-bot serve
 ```
 
