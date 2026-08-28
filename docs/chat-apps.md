@@ -73,7 +73,7 @@ silver-research-bot will automatically register, configure `~/.silver_research_b
 silver-research-bot gateway
 ```
 
-That's it â€?silver-research-bot handles the rest!
+That's it â€”silver-research-bot handles the rest!
 
 <br>
 
@@ -114,7 +114,7 @@ If you prefer to configure manually, add the following to `~/.silver_research_bo
 
 **1. Create a bot**
 - Go to https://discord.com/developers/applications
-- Create an application â†?Bot â†?Add Bot
+- Create an application â†’Bot â†’Add Bot
 - Copy the bot token
 
 **2. Enable intents**
@@ -122,8 +122,8 @@ If you prefer to configure manually, add the following to `~/.silver_research_bo
 - (Optional) Enable **SERVER MEMBERS INTENT** if you plan to use allow lists based on member data
 
 **3. Get your User ID**
-- Discord Settings â†?Advanced â†?enable **Developer Mode**
-- Right-click your avatar â†?**Copy User ID**
+- Discord Settings â†’Advanced â†’enable **Developer Mode**
+- Right-click your avatar â†’**Copy User ID**
 
 **4. Configure**
 
@@ -143,15 +143,15 @@ If you prefer to configure manually, add the following to `~/.silver_research_bo
 ```
 
 > `groupPolicy` controls how the bot responds in group channels:
-> - `"mention"` (default) â€?Only respond when @mentioned
-> - `"open"` â€?Respond to all messages
+> - `"mention"` (default) â€”Only respond when @mentioned
+> - `"open"` â€”Respond to all messages
 > DMs always respond when the sender is in `allowFrom`.
 > - If you set group policy to open create new threads as private threads and then @ the bot into it. Otherwise the thread itself and the channel in which you spawned it will spawn a bot session.
 > `allowChannels` restricts the bot to specific Discord channel IDs. Empty (default) means respond in every channel the bot can see. Example: `["1234567890", "0987654321"]`. The filter applies after `allowFrom`, so both must pass.
 > `streaming` defaults to `true`. Disable it only if you explicitly want non-streaming replies.
 
 **5. Invite the bot**
-- OAuth2 â†?URL Generator
+- OAuth2 â†’URL Generator
 - Scopes: `bot`
 - Bot Permissions: `Send Messages`, `Read Message History`
 - Open the generated invite URL and add the bot to your server
@@ -170,7 +170,7 @@ silver-research-bot gateway
 Install Matrix dependencies first:
 
 ```bash
-pip install silver-research-bot[matrix]
+pip install -e ".[channels]"
 ```
 
 > [!NOTE]
@@ -216,7 +216,7 @@ for reliable encryption, password login is recommended instead. If the
 }
 ```
 
-> Keep a persistent `matrix-store` â€?encrypted session state is lost if these change across restarts.
+> Keep a persistent `matrix-store` â€”encrypted session state is lost if these change across restarts.
 
 | Option | Description |
 |--------|-------------|
@@ -241,13 +241,13 @@ silver-research-bot gateway
 <details>
 <summary><b>WhatsApp</b></summary>
 
-Requires **Node.js â‰?8**.
+Requires **Node.js â‰¥8**.
 
 **1. Link device**
 
 ```bash
 silver-research-bot channels login whatsapp
-# Scan QR with WhatsApp â†?Settings â†?Linked Devices
+# Scan QR with WhatsApp â†’Settings â†’Linked Devices
 ```
 
 **2. Configure**
@@ -282,14 +282,14 @@ silver-research-bot gateway
 <details>
 <summary><b>Feishu</b></summary>
 
-Uses **WebSocket** long connection â€?no public IP required.
+Uses **WebSocket** long connection â€”no public IP required.
 
 **1. Create a Feishu bot**
 - Visit [Feishu Open Platform](https://open.feishu.cn/app)
-- Create a new app â†?Enable **Bot** capability
+- Create a new app â†’Enable **Bot** capability
 - **Permissions**:
   - `im:message` (send messages) and `im:message.p2p_msg:readonly` (receive messages)
-  - **Streaming replies** (default in silver-research-bot): add **`cardkit:card:write`** (often labeled **Create and update cards** in the Feishu developer console). Required for CardKit entities and streamed assistant text. Older apps may not have it yet â€?open **Permission management**, enable the scope, then **publish** a new app version if the console requires it.
+  - **Streaming replies** (default in silver-research-bot): add **`cardkit:card:write`** (often labeled **Create and update cards** in the Feishu developer console). Required for CardKit entities and streamed assistant text. Older apps may not have it yet â€”open **Permission management**, enable the scope, then **publish** a new app version if the console requires it.
   - If you **cannot** add `cardkit:card:write`, set `"streaming": false` under `channels.feishu` (see below). The bot still works; replies use normal interactive cards without token-by-token streaming.
 - **Events**: Add `im.message.receive_v1` (receive messages)
   - Select **Long Connection** mode (requires running silver-research-bot first to establish connection)
@@ -322,7 +322,7 @@ Uses **WebSocket** long connection â€?no public IP required.
 > `streaming` defaults to `true`. Use `false` if your app does not have **`cardkit:card:write`** (see permissions above).
 > `encryptKey` and `verificationToken` are optional for Long Connection mode.
 > `allowFrom`: Add your open_id (find it in silver-research-bot logs when you message the bot). Use `["*"]` to allow all users.
-> `groupPolicy`: `"mention"` (default â€?respond only when @mentioned), `"open"` (respond to all group messages). Private chats always respond.
+> `groupPolicy`: `"mention"` (default â€”respond only when @mentioned), `"open"` (respond to all group messages). Private chats always respond.
 > `reactEmoji`: Emoji for "processing" status (default: `OnIt`). See [available emojis](https://open.larkoffice.com/document/server-docs/im-v1/message-reaction/emojis-introduce).
 > `doneEmoji`: Optional emoji for "completed" status (e.g., `DONE`, `OK`, `HEART`). When set, bot adds this reaction after removing `reactEmoji`.
 > `toolHintPrefix`: Prefix for inline tool hints in streaming cards (default: `ğŸ”§`).
@@ -335,24 +335,24 @@ silver-research-bot gateway
 ```
 
 > [!TIP]
-> Feishu uses WebSocket to receive messages â€?no webhook or public IP needed!
+> Feishu uses WebSocket to receive messages â€”no webhook or public IP needed!
 
 </details>
 
 <details>
 <summary><b>QQ (QQå•èŠ)</b></summary>
 
-Uses **botpy SDK** with WebSocket â€?no public IP required. Currently supports **private messages only**.
+Uses **botpy SDK** with WebSocket â€”no public IP required. Currently supports **private messages only**.
 
 **1. Register & create bot**
-- Visit [QQ Open Platform](https://q.qq.com) â†?Register as a developer (personal or enterprise)
+- Visit [QQ Open Platform](https://q.qq.com) â†’Register as a developer (personal or enterprise)
 - Create a new bot application
-- Go to **å¼€å‘è®¾ç½?(Developer Settings)** â†?copy **AppID** and **AppSecret**
+- Go to **å¼€å‘è®¾ç½®(Developer Settings)** â†’copy **AppID** and **AppSecret**
 
 **2. Set up sandbox for testing**
 - In the bot management console, find **æ²™ç®±é…ç½® (Sandbox Config)**
-- Under **åœ¨æ¶ˆæ¯åˆ—è¡¨é…ç½?*, click **æ·»åŠ æˆå‘˜** and add your own QQ number
-- Once added, scan the bot's QR code with mobile QQ â†?open the bot profile â†?tap "å‘æ¶ˆæ? to start chatting
+- Under **åœ¨æ¶ˆæ¯åˆ—è¡¨é…ç½®*, click **æ·»åŠ æˆå‘˜** and add your own QQ number
+- Once added, scan the bot's QR code with mobile QQ â†’open the bot profile â†’tap "å‘æ¶ˆæ¯ to start chatting
 
 **3. Configure**
 
@@ -380,14 +380,14 @@ Uses **botpy SDK** with WebSocket â€?no public IP required. Currently supports *
 silver-research-bot gateway
 ```
 
-Now send a message to the bot from QQ â€?it should respond!
+Now send a message to the bot from QQ â€”it should respond!
 
 </details>
 
 <details>
 <summary><b>DingTalk (é’‰é’‰)</b></summary>
 
-Uses **Stream Mode** â€?no public IP required.
+Uses **Stream Mode** â€”no public IP required.
 
 **1. Create a DingTalk bot**
 - Visit [DingTalk Open Platform](https://open-dev.dingtalk.com/)
@@ -426,18 +426,18 @@ silver-research-bot gateway
 <details>
 <summary><b>Slack</b></summary>
 
-Uses **Socket Mode** â€?no public URL required.
+Uses **Socket Mode** â€”no public URL required.
 
 **1. Create a Slack app**
-- Go to [Slack API](https://api.slack.com/apps) â†?**Create New App** â†?"From scratch"
+- Go to [Slack API](https://api.slack.com/apps) â†’**Create New App** â†’"From scratch"
 - Pick a name and select your workspace
 
 **2. Configure the app**
-- **Socket Mode**: Toggle ON â†?Generate an **App-Level Token** with `connections:write` scope â†?copy it (`xapp-...`)
+- **Socket Mode**: Toggle ON â†’Generate an **App-Level Token** with `connections:write` scope â†’copy it (`xapp-...`)
 - **OAuth & Permissions**: Add bot scopes: `chat:write`, `reactions:write`, `app_mentions:read`
-- **Event Subscriptions**: Toggle ON â†?Subscribe to bot events: `message.im`, `message.channels`, `app_mention` â†?Save Changes
-- **App Home**: Scroll to **Show Tabs** â†?Enable **Messages Tab** â†?Check **"Allow users to send Slash commands and messages from the messages tab"**
-- **Install App**: Click **Install to Workspace** â†?Authorize â†?copy the **Bot Token** (`xoxb-...`)
+- **Event Subscriptions**: Toggle ON â†’Subscribe to bot events: `message.im`, `message.channels`, `app_mention` â†’Save Changes
+- **App Home**: Scroll to **Show Tabs** â†’Enable **Messages Tab** â†’Check **"Allow users to send Slash commands and messages from the messages tab"**
+- **Install App**: Click **Install to Workspace** â†’Authorize â†’copy the **Bot Token** (`xoxb-...`)
 
 **3. Configure silver-research-bot**
 
@@ -461,10 +461,10 @@ Uses **Socket Mode** â€?no public URL required.
 silver-research-bot gateway
 ```
 
-DM the bot directly or @mention it in a channel â€?it should respond!
+DM the bot directly or @mention it in a channel â€”it should respond!
 
 > [!TIP]
-> - `groupPolicy`: `"mention"` (default â€?respond only when @mentioned), `"open"` (respond to all channel messages), or `"allowlist"` (restrict to specific channels).
+> - `groupPolicy`: `"mention"` (default â€”respond only when @mentioned), `"open"` (respond to all channel messages), or `"allowlist"` (restrict to specific channels).
 > - DM policy defaults to open. Set `"dm": {"enabled": false}` to disable DMs.
 
 </details>
@@ -472,20 +472,20 @@ DM the bot directly or @mention it in a channel â€?it should respond!
 <details>
 <summary><b>Email</b></summary>
 
-Give silver-research-bot its own email account. It polls **IMAP** for incoming mail and replies via **SMTP** â€?like a personal email assistant.
+Give silver-research-bot its own email account. It polls **IMAP** for incoming mail and replies via **SMTP** â€”like a personal email assistant.
 
 **1. Get credentials (Gmail example)**
 - Create a dedicated Gmail account for your bot (e.g. `my-silver-research-bot@gmail.com`)
-- Enable 2-Step Verification â†?Create an [App Password](https://myaccount.google.com/apppasswords)
+- Enable 2-Step Verification â†’Create an [App Password](https://myaccount.google.com/apppasswords)
 - Use this app password for both IMAP and SMTP
 
 **2. Configure**
 
-> - `consentGranted` must be `true` to allow mailbox access. This is a safety gate â€?set `false` to fully disable.
+> - `consentGranted` must be `true` to allow mailbox access. This is a safety gate â€”set `false` to fully disable.
 > - `allowFrom`: Add your email address. Use `["*"]` to accept emails from anyone.
 > - `smtpUseTls` and `smtpUseSsl` default to `true` / `false` respectively, which is correct for Gmail (port 587 + STARTTLS). No need to set them explicitly.
 > - Set `"autoReplyEnabled": false` if you only want to read/analyze emails without sending automatic replies.
-> - `allowedAttachmentTypes`: Save inbound attachments matching these MIME types â€?`["*"]` for all, e.g. `["application/pdf", "image/*"]` (default `[]` = disabled).
+> - `allowedAttachmentTypes`: Save inbound attachments matching these MIME types â€”`["*"]` for all, e.g. `["application/pdf", "image/*"]` (default `[]` = disabled).
 > - `maxAttachmentSize`: Max size per attachment in bytes (default `2000000` / 2MB).
 > - `maxAttachmentsPerEmail`: Max attachments to save per email (default `5`).
 
@@ -575,17 +575,17 @@ silver-research-bot gateway
 
 > Here we use [wecom-aibot-sdk-python](https://github.com/chengyongru/wecom_aibot_sdk) (community Python version of the official [@wecom/aibot-node-sdk](https://www.npmjs.com/package/@wecom/aibot-node-sdk)).
 >
-> Uses **WebSocket** long connection â€?no public IP required.
+> Uses **WebSocket** long connection â€”no public IP required.
 
 **1. Install the optional dependency**
 
 ```bash
-pip install silver-research-bot[wecom]
+pip install -e ".[channels]"
 ```
 
 **2. Create a WeCom AI Bot**
 
-Go to the WeCom admin console â†?Intelligent Robot â†?Create Robot â†?select **API mode** with **long connection**. Copy the Bot ID and Secret.
+Go to the WeCom admin console â†’Intelligent Robot â†’Create Robot â†’select **API mode** with **long connection**. Copy the Bot ID and Secret.
 
 **3. Configure**
 
@@ -611,15 +611,15 @@ silver-research-bot gateway
 </details>
 
 <details>
-<summary><b>Microsoft Teams</b> (MVP â€?DM only)</summary>
+<summary><b>Microsoft Teams</b> (MVP â€”DM only)</summary>
 
 > Direct-message text in/out, tenant-aware OAuth, conversation reference persistence.
-> Uses a public HTTPS webhook â€?no WebSocket; you need a tunnel or reverse proxy.
+> Uses a public HTTPS webhook â€”no WebSocket; you need a tunnel or reverse proxy.
 
 **1. Install the optional dependency**
 
 ```bash
-pip install silver-research-bot[msteams]
+pip install -e ".[channels]"
 ```
 
 **2. Create a Teams / Azure bot app registration**
@@ -641,7 +641,7 @@ Create or reuse a Microsoft Teams / Azure bot app registration. Set the bot mess
       "path": "/api/messages",
       "allowFrom": ["*"],
       "replyInThread": true,
-      "mentionOnlyResponse": "Hi â€?what can I help with?",
+      "mentionOnlyResponse": "Hi â€”what can I help with?",
       "validateInboundAuth": true
     }
   }

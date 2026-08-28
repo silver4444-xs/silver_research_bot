@@ -4,43 +4,22 @@
 
 > [!IMPORTANT]
 > This README may describe features that are available first in the latest source code.
-> If you want the newest features and experiments, install from source.
-> If you want the most stable day-to-day experience, install from PyPI or with `uv`.
+> Install from source to get the newest features and experiments. The package is not
+> yet published to PyPI.
 
-**Install from source** (latest features, experimental changes may land here first; recommended for development)
+**Install from source**
 
 ```bash
 git clone https://github.com/silver4444-xs/silver_research_bot.git
 cd silver_research_bot
-pip install -e .
-```
-
-**Install with [uv](https://github.com/astral-sh/uv)** (stable release, fast)
-
-```bash
-uv tool install silver-research-bot
-```
-
-**Install from PyPI** (stable release)
-
-```bash
-pip install silver-research-bot
+pip install -e ".[dev]"
 ```
 
 ### Update to latest version
 
-**PyPI / pip**
-
 ```bash
-pip install -U silver-research-bot
-silver-research-bot --version
-```
-
-**uv**
-
-```bash
-uv tool upgrade silver-research-bot
-silver-research-bot --version
+git pull
+pip install -e ".[dev]"
 ```
 
 **Using WhatsApp?** Rebuild the local bridge after upgrading:
@@ -83,7 +62,7 @@ Configure these **two parts** in your config (other options have defaults).
 }
 ```
 
-*Set your model* (optionally pin a provider �?defaults to auto-detection):
+*Set your model* (optionally pin a provider —defaults to auto-detection):
 ```json
 {
   "agents": {
