@@ -60,7 +60,7 @@ _STANDARD_FN_KEYS = frozenset({"name", "arguments"})
 '标准function调用字段，用于提取扩展字段'
 
 _DEFAULT_OPENROUTER_HEADERS = {
-    "HTTP-Referer": "https://github.com/HKUDS/silver_research_bot",
+    "HTTP-Referer": "https://github.com/silver4444-xs/silver_research_bot",
     "X-OpenRouter-Title": "silver_research_bot",
     "X-OpenRouter-Categories": "cli-agent,personal-agent",
 }

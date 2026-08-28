@@ -365,7 +365,7 @@ def onboard(
         console.print("     Get one at: https://openrouter.ai/keys")
         console.print(f"  2. Chat: [cyan]{agent_cmd}[/cyan]")
     console.print(
-        "\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/silver_research_bot#-chat-apps[/dim]"
+        "\n[dim]Want Telegram/WhatsApp? See: https://github.com/silver4444-xs/silver_research_bot#-chat-apps[/dim]"
     )
 
 
