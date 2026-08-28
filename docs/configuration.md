@@ -57,7 +57,7 @@ IMAP_PASSWORD=your-password-here
 ## Providers
 
 > [!TIP]
-> - **Voice transcription**: Voice messages (Telegram, WhatsApp) are automatically transcribed using Whisper. By default Groq is used (free tier). Set `"transcriptionProvider": "openai"` under `channels` to use OpenAI Whisper instead �?the API key is picked from the matching provider config.
+> - **Voice transcription**: Voice messages (Telegram, WhatsApp) are automatically transcribed using Whisper. By default Groq is used (free tier). Set `"transcriptionProvider": "openai"` under `channels` to use OpenAI Whisper instead —the API key is picked from the matching provider config.
 > - **MiniMax Coding Plan**: Exclusive discount links for the silver-research-bot community: [Overseas](https://platform.minimax.io/subscribe/coding-plan?code=9txpdXw04g&source=link) · [Mainland China](https://platform.minimaxi.com/subscribe/token-plan?code=GILTJpMTqZ&source=link)
 > - **MiniMax (Mainland China)**: If your API key is from MiniMax's mainland China platform (minimaxi.com), set `"apiBase": "https://api.minimaxi.com/v1"` in your minimax provider config.
 > - **MiniMax thinking mode**: Use `providers.minimaxAnthropic` when you want `reasoningEffort` / thinking mode. MiniMax exposes that capability through its Anthropic-compatible endpoint, so silver-research-bot keeps it as a separate provider instead of guessing MiniMax-specific thinking parameters on the generic OpenAI-compatible `minimax` endpoint. It uses the same `MINIMAX_API_KEY`. Default Anthropic-compatible base URL: `https://api.minimax.io/anthropic`; for mainland China use `https://api.minimaxi.com/anthropic`.
@@ -68,7 +68,7 @@ IMAP_PASSWORD=your-password-here
 
 | Provider | Purpose | Get API Key |
 |----------|---------|-------------|
-| `custom` | Any OpenAI-compatible endpoint | �?|
+| `custom` | Any OpenAI-compatible endpoint | —|
 | `openrouter` | LLM (recommended, access to all models) | [openrouter.ai](https://openrouter.ai) |
 | `volcengine` | LLM (VolcEngine, pay-per-use) | [Coding Plan](https://www.volcengine.com/activity/codingplan?utm_campaign=silver-research-bot&utm_content=silver-research-bot&utm_medium=devrel&utm_source=OWO&utm_term=silver-research-bot) · [volcengine.com](https://www.volcengine.com) |
 | `byteplus` | LLM (VolcEngine international, pay-per-use) | [Coding Plan](https://www.byteplus.com/en/activity/codingplan?utm_campaign=silver-research-bot&utm_content=silver-research-bot&utm_medium=devrel&utm_source=OWO&utm_term=silver-research-bot) · [byteplus.com](https://www.byteplus.com) |
@@ -86,12 +86,12 @@ IMAP_PASSWORD=your-password-here
 | `moonshot` | LLM (Moonshot/Kimi) | [platform.moonshot.cn](https://platform.moonshot.cn) |
 | `zhipu` | LLM (Zhipu GLM) | [open.bigmodel.cn](https://open.bigmodel.cn) |
 | `mimo` | LLM (MiMo) | [platform.xiaomimimo.com](https://platform.xiaomimimo.com) |
-| `ollama` | LLM (local, Ollama) | �?|
-| `lm_studio` | LLM (local, LM Studio) | �?|
+| `ollama` | LLM (local, Ollama) | —|
+| `lm_studio` | LLM (local, LM Studio) | —|
 | `mistral` | LLM | [docs.mistral.ai](https://docs.mistral.ai/) |
 | `stepfun` | LLM (Step Fun/阶跃星辰) | [platform.stepfun.com](https://platform.stepfun.com) |
 | `ovms` | LLM (local, OpenVINO Model Server) | [docs.openvino.ai](https://docs.openvino.ai/2026/model-server/ovms_docs_llm_quickstart.html) |
-| `vllm` | LLM (local, any OpenAI-compatible server) | �?|
+| `vllm` | LLM (local, any OpenAI-compatible server) | —|
 | `openai_codex` | LLM (Codex, OAuth) | `silver-research-bot provider login openai-codex` |
 | `github_copilot` | LLM (GitHub Copilot, OAuth) | `silver-research-bot provider login github-copilot` |
 | `qianfan` | LLM (Baidu Qianfan) | [cloud.baidu.com](https://cloud.baidu.com/doc/qianfan/s/Hmh4suq26) |
@@ -175,7 +175,7 @@ silver-research-bot agent -c ~/.silver_research_bot-telegram/config.json -w /tmp
 <details>
 <summary><b>Custom Provider (Any OpenAI-compatible API)</b></summary>
 
-Connects directly to any OpenAI-compatible endpoint �?llama.cpp, Together AI, Fireworks, Azure OpenAI, or any self-hosted server. Model name is passed as-is.
+Connects directly to any OpenAI-compatible endpoint —llama.cpp, Together AI, Fireworks, Azure OpenAI, or any self-hosted server. Model name is passed as-is.
 
 ```json
 {
@@ -217,7 +217,7 @@ Connects directly to any OpenAI-compatible endpoint �?llama.cpp, Together AI, 
 > }
 > ```
 >
-> In short: **chat-completions-compatible endpoint �?`custom`**; **Responses-compatible endpoint �?`azure_openai`**.
+> In short: **chat-completions-compatible endpoint —`custom`**; **Responses-compatible endpoint —`azure_openai`**.
 
 </details>
 
@@ -231,7 +231,7 @@ Run a local model with Ollama, then add to config:
 ollama run llama3.2
 ```
 
-**2. Add to config** (partial �?merge into `~/.silver_research_bot/config.json`):
+**2. Add to config** (partial —merge into `~/.silver_research_bot/config.json`):
 ```json
 {
   "providers": {
@@ -263,7 +263,7 @@ ollama run llama3.2
 - Load a model (e.g., Llama, Mistral, Qwen)
 - Click "Start Server" (default port: 1234)
 
-**2. Add to config** (partial �?merge into `~/.silver_research_bot/config.json`):
+**2. Add to config** (partial —merge into `~/.silver_research_bot/config.json`):
 ```json
 {
   "providers": {
@@ -339,7 +339,7 @@ docker run -d \
   --target_device GPU
 ```
 
-**3. Add to config** (partial �?merge into `~/.silver_research_bot/config.json`):
+**3. Add to config** (partial —merge into `~/.silver_research_bot/config.json`):
 
 ```json
 {
@@ -357,7 +357,7 @@ docker run -d \
 }
 ```
 
-> OVMS is a local server �?no API key required. Supports tool calling (`--tool_parser gptoss`), reasoning (`--reasoning_parser gptoss`), and streaming.
+> OVMS is a local server —no API key required. Supports tool calling (`--tool_parser gptoss`), reasoning (`--reasoning_parser gptoss`), and streaming.
 > See the [official OVMS docs](https://docs.openvino.ai/2026/model-server/ovms_docs_llm_quickstart.html) for more details.
 </details>
 
@@ -371,7 +371,7 @@ Run your own model with vLLM or any OpenAI-compatible server, then add to config
 vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 ```
 
-**2. Add to config** (partial �?merge into `~/.silver_research_bot/config.json`):
+**2. Add to config** (partial —merge into `~/.silver_research_bot/config.json`):
 
 *Provider (set API key to null for local servers):*
 ```json
@@ -402,7 +402,7 @@ vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 <summary><b>Adding a New Provider (Developer Guide)</b></summary>
 
 silver-research-bot uses a **Provider Registry** (`silver-research-bot/providers/registry.py`) as the single source of truth.
-Adding a new provider only takes **2 steps** �?no if-elif chains to touch.
+Adding a new provider only takes **2 steps** —no if-elif chains to touch.
 
 **Step 1.** Add a `ProviderSpec` entry to `PROVIDERS` in `silver-research-bot/providers/registry.py`:
 
@@ -460,7 +460,7 @@ Global settings that apply to all channels. Configure under the `channels` secti
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `sendProgress` | `true` | Stream agent's text progress to the channel |
-| `sendToolHints` | `false` | Stream tool-call hints (e.g. `read_file("�?)`) |
+| `sendToolHints` | `false` | Stream tool-call hints (e.g. `read_file("—)`) |
 | `sendMaxRetries` | `3` | Max delivery attempts per outbound message, including the initial send (0-10 configured, minimum 1 actual attempt) |
 | `transcriptionProvider` | `"groq"` | Voice transcription backend: `"groq"` (free tier, default) or `"openai"`. API key is auto-resolved from the matching provider config. |
 
@@ -515,7 +515,7 @@ If you need to allow trusted private ranges such as Tailscale / CGNAT addresses,
 | `jina` | `apiKey` | `JINA_API_KEY` | Free tier (10M tokens) |
 | `kagi` | `apiKey` | `KAGI_API_KEY` | No |
 | `searxng` | `baseUrl` | `SEARXNG_BASE_URL` | Yes (self-hosted) |
-| `duckduckgo` (default) | �?| �?| Yes |
+| `duckduckgo` (default) | —| —| Yes |
 
 **Disable all built-in web tools:**
 ```json
@@ -623,14 +623,14 @@ If you need to allow trusted private ranges such as Tailscale / CGNAT addresses,
 | `provider` | string | `"duckduckgo"` | Search backend: `brave`, `tavily`, `jina`, `searxng`, `duckduckgo` |
 | `apiKey` | string | `""` | API key for Brave or Tavily |
 | `baseUrl` | string | `""` | Base URL for SearXNG |
-| `maxResults` | integer | `5` | Results per search (1�?0) |
+| `maxResults` | integer | `5` | Results per search (1—0) |
 
 ## MCP (Model Context Protocol)
 
 > [!TIP]
 > The config format is compatible with Claude Desktop / Cursor. You can copy MCP server configs directly from any MCP server's README.
 
-silver-research-bot supports [MCP](https://modelcontextprotocol.io/) �?connect external tool servers and use them as native agent tools.
+silver-research-bot supports [MCP](https://modelcontextprotocol.io/) —connect external tool servers and use them as native agent tools.
 
 Add MCP servers to your `config.json`:
 
@@ -697,7 +697,7 @@ Use `enabledTools` to register only a subset of tools from an MCP server:
 - Set `enabledTools` to `[]` to register no tools from that server.
 - Set `enabledTools` to a non-empty list of names to register only that subset.
 
-MCP tools are automatically discovered and registered on startup. The LLM can use them alongside built-in tools �?no extra configuration needed.
+MCP tools are automatically discovered and registered on startup. The LLM can use them alongside built-in tools —no extra configuration needed.
 
 
 
@@ -711,7 +711,7 @@ MCP tools are automatically discovered and registered on startup. The LLM can us
 | Option | Default | Description |
 |--------|---------|-------------|
 | `tools.restrictToWorkspace` | `false` | When `true`, restricts **all** agent tools (shell, file read/write/edit, list) to the workspace directory. Prevents path traversal and out-of-scope access. |
-| `tools.exec.sandbox` | `""` | Sandbox backend for shell commands. Set to `"bwrap"` to wrap exec calls in a [bubblewrap](https://github.com/containers/bubblewrap) sandbox �?the process can only see the workspace (read-write) and media directory (read-only); config files and API keys are hidden. Automatically enables `restrictToWorkspace` for file tools. **Linux only** �?requires `bwrap` installed (`apt install bubblewrap`; pre-installed in the Docker image). Not available on macOS or Windows (bwrap depends on Linux kernel namespaces). |
+| `tools.exec.sandbox` | `""` | Sandbox backend for shell commands. Set to `"bwrap"` to wrap exec calls in a [bubblewrap](https://github.com/containers/bubblewrap) sandbox —the process can only see the workspace (read-write) and media directory (read-only); config files and API keys are hidden. Automatically enables `restrictToWorkspace` for file tools. **Linux only** —requires `bwrap` installed (`apt install bubblewrap`; pre-installed in the Docker image). Not available on macOS or Windows (bwrap depends on Linux kernel namespaces). |
 | `tools.exec.enable` | `true` | When `false`, the shell `exec` tool is not registered at all. Use this to completely disable shell command execution. |
 | `tools.exec.pathAppend` | `""` | Extra directories to append to `PATH` when running shell commands (e.g. `/usr/sbin` for `ufw`). |
 | `channels.*.allowFrom` | `[]` (deny all) | Whitelist of user IDs. Empty denies all; use `["*"]` to allow everyone. |
@@ -721,7 +721,7 @@ MCP tools are automatically discovered and registered on startup. The LLM can us
 
 ## Auto Compact
 
-When a user is idle for longer than a configured threshold, silver-research-bot **proactively** compresses the older part of the session context into a summary while keeping a recent legal suffix of live messages. This reduces token cost and first-token latency when the user returns �?instead of re-processing a long stale context with an expired KV cache, the model receives a compact summary, the most recent live context, and fresh input.
+When a user is idle for longer than a configured threshold, silver-research-bot **proactively** compresses the older part of the session context into a summary while keeping a recent legal suffix of live messages. This reduces token cost and first-token latency when the user returns —instead of re-processing a long stale context with an expired KV cache, the model receives a compact summary, the most recent live context, and fresh input.
 
 ```json
 {
@@ -735,7 +735,7 @@ When a user is idle for longer than a configured threshold, silver-research-bot 
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `agents.defaults.idleCompactAfterMinutes` | `0` (disabled) | Minutes of idle time before auto-compaction starts. Set to `0` to disable. Recommended: `15` �?close to a typical LLM KV cache expiry window, so stale sessions get compacted before the user returns. |
+| `agents.defaults.idleCompactAfterMinutes` | `0` (disabled) | Minutes of idle time before auto-compaction starts. Set to `0` to disable. Recommended: `15` —close to a typical LLM KV cache expiry window, so stale sessions get compacted before the user returns. |
 
 `sessionTtlMinutes` remains accepted as a legacy alias for backward compatibility, but `idleCompactAfterMinutes` is the preferred config key going forward.
 
@@ -746,7 +746,7 @@ How it works:
 4. **Restart-safe resume**: The summary is also mirrored into session metadata so it can still be recovered after a process restart.
 
 > [!NOTE]
-> Mental model: "summarize older context, keep the freshest live turns, **and overwrite the session file with the compact form.**" It is not a full `session.clear()`, but it is a write �?not a soft cursor move.
+> Mental model: "summarize older context, keep the freshest live turns, **and overwrite the session file with the compact form.**" It is not a full `session.clear()`, but it is a write —not a soft cursor move.
 >
 > Concretely, auto compact rewrites `sessions/<key>.jsonl` in place: older messages (including their structured `tool_calls` / `tool_call_id` / `reasoning_content`) are replaced by just the retained recent suffix (currently 8 messages), while the archived prefix is preserved only as a plain-text summary appended to `memory/history.jsonl` (or a `[RAW] ...` flattened dump if LLM summarization fails). The original structured JSON of those turns is no longer recoverable from the session file.
 >
@@ -788,7 +788,7 @@ By default, each channel × chat ID combination gets its own session. If you use
 }
 ```
 
-When enabled, all incoming messages �?regardless of which channel they arrive on �?are routed into a single shared session. Switching from Telegram to Discord (or any other channel) continues the same conversation seamlessly.
+When enabled, all incoming messages —regardless of which channel they arrive on —are routed into a single shared session. Switching from Telegram to Discord (or any other channel) continues the same conversation seamlessly.
 
 | Behavior | `false` (default) | `true` |
 |----------|-------------------|--------|
@@ -796,9 +796,9 @@ When enabled, all incoming messages �?regardless of which channel they arrive 
 | Cross-channel continuity | No | Yes |
 | `/new` clears | Current channel session | Shared session |
 | `/stop` finds tasks | By channel session | By shared session |
-| Existing `session_key_override` (e.g. Telegram thread) | Respected | Still respected �?not overwritten |
+| Existing `session_key_override` (e.g. Telegram thread) | Respected | Still respected —not overwritten |
 
-> This is designed for single-user, multi-device setups. It is **off by default** �?existing users see zero behavior change.
+> This is designed for single-user, multi-device setups. It is **off by default** —existing users see zero behavior change.
 
 ## Disabled Skills
 

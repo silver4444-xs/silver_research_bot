@@ -1,10 +1,10 @@
 # My Tool
 
-Let the agent sense and adjust its own runtime state â€?like asking a coworker "are you busy? can you switch to a bigger monitor?"
+Let the agent sense and adjust its own runtime state â€”like asking a coworker "are you busy? can you switch to a bigger monitor?"
 
 ## Why You Need It
 
-Normal tools let the agent operate on the outside world (read/write files, search code). But the agent knows nothing about itself â€?it doesn't know which model it's running on, how many iterations are left, or how many tokens it has consumed.
+Normal tools let the agent operate on the outside world (read/write files, search code). But the agent knows nothing about itself â€”it doesn't know which model it's running on, how many iterations are left, or how many tokens it has consumed.
 
 My tool fills this gap. With it, the agent can:
 
@@ -28,17 +28,17 @@ To allow the agent to set its configuration (e.g. switch models, adjust paramete
 Legacy `tools.myEnabled` / `tools.mySet` keys are auto-migrated on load, and
 rewritten in-place the next time `silver-research-bot onboard` refreshes the config.
 
-All modifications are held in memory only â€?restart restores defaults.
+All modifications are held in memory only â€”restart restores defaults.
 
 ---
 
-## check â€?Check "my" current state
+## check â€”Check "my" current state
 
 Without parameters, returns a key config overview:
 
 ```text
 my(action="check")
-# â†?max_iterations: 40
+# â†’max_iterations: 40
 #   context_window_tokens: 65536
 #   model: 'anthropic/claude-sonnet-4-20250514'
 #   workspace: PosixPath('/tmp/workspace')
@@ -53,13 +53,13 @@ With a key parameter, drill into a specific config:
 
 ```text
 my(action="check", key="_last_usage.prompt_tokens")
-# â†?How many prompt tokens I've used so far
+# â†’How many prompt tokens I've used so far
 
 my(action="check", key="model")
-# â†?What model I'm currently running on
+# â†’What model I'm currently running on
 
 my(action="check", key="web_config.enable")
-# â†?Whether web search is enabled
+# â†’Whether web search is enabled
 ```
 
 ### What you can do with it
@@ -68,26 +68,26 @@ my(action="check", key="web_config.enable")
 |----------|-----|
 | "What model are you using?" | `check("model")` |
 | "How many more tool calls can you make?" | `check("max_iterations")` minus `check("_current_iteration")` |
-| "How many tokens has this conversation used?" | `check("_last_usage")` â€?cumulative across all turns |
+| "How many tokens has this conversation used?" | `check("_last_usage")` â€”cumulative across all turns |
 | "Where is your working directory?" | `check("workspace")` |
 | "Show me your full config" | `check()` |
-| "Are there any subagents running?" | `check("subagents")` â€?shows phase, iteration, elapsed time, tool events |
+| "Are there any subagents running?" | `check("subagents")` â€”shows phase, iteration, elapsed time, tool events |
 
 ---
 
-## set â€?Runtime tuning
+## set â€”Runtime tuning
 
 Changes take effect immediately, no restart required.
 
 ```text
 my(action="set", key="max_iterations", value=80)
-# â†?Bump iteration limit from 40 to 80
+# â†’Bump iteration limit from 40 to 80
 
 my(action="set", key="model", value="fast-model")
-# â†?Switch to a faster model
+# â†’Switch to a faster model
 
 my(action="set", key="context_window_tokens", value=131072)
-# â†?Expand context window for long documents
+# â†’Expand context window for long documents
 ```
 
 You can also store custom state in your scratchpad:
@@ -96,17 +96,17 @@ You can also store custom state in your scratchpad:
 my(action="set", key="current_project", value="silver-research-bot")
 my(action="set", key="user_style_preference", value="concise")
 my(action="set", key="task_complexity", value="high")
-# â†?These values persist into the next conversation turn
+# â†’These values persist into the next conversation turn
 ```
 
 ### Protected parameters
 
-These parameters have type and range validation â€?invalid values are rejected:
+These parameters have type and range validation â€”invalid values are rejected:
 
 | Parameter | Type | Range | Purpose |
 |-----------|------|-------|---------|
-| `max_iterations` | int | 1â€?00 | Max tool calls per conversation turn |
-| `context_window_tokens` | int | 4,096â€?,000,000 | Context window size |
+| `max_iterations` | int | 1â€”00 | Max tool calls per conversation turn |
+| `context_window_tokens` | int | 4,096â€”,000,000 | Context window size |
 | `model` | str | non-empty | LLM model to use |
 
 Other parameters (e.g. `workspace`, `provider_retry_mode`, `max_tool_result_chars`) can be set freely, as long as the value is JSON-safe.
@@ -119,14 +119,14 @@ Other parameters (e.g. `workspace`, `provider_retry_mode`, `max_tool_result_char
 
 ```text
 Agent: This codebase is large, let me expand my context window to handle it.
-â†?my(action="set", key="context_window_tokens", value=131072)
+â†’my(action="set", key="context_window_tokens", value=131072)
 ```
 
 ### "Simple question, don't waste compute"
 
 ```text
 Agent: This is a straightforward question, let me switch to a faster model.
-â†?my(action="set", key="model", value="fast-model")
+â†’my(action="set", key="model", value="fast-model")
 ```
 
 ### "Remember user preferences across turns"
@@ -134,7 +134,7 @@ Agent: This is a straightforward question, let me switch to a faster model.
 ```text
 Turn 1: my(action="set", key="user_prefers_concise", value=True)
 Turn 2: my(action="check", key="user_prefers_concise")
-# â†?True (still remembers the user likes concise replies)
+# â†’True (still remembers the user likes concise replies)
 ```
 
 ### "Self-diagnosis"
@@ -142,17 +142,17 @@ Turn 2: my(action="check", key="user_prefers_concise")
 ```text
 User: "Why aren't you searching the web?"
 Agent: Let me check my web config.
-â†?my(action="check", key="web_config.enable")
-# â†?False
-Agent: Web search is disabled â€?please set web.enable: true in your config.
+â†’my(action="check", key="web_config.enable")
+# â†’False
+Agent: Web search is disabled â€”please set web.enable: true in your config.
 ```
 
 ### "Token budget management"
 
 ```text
 Agent: Let me check how much budget I have left.
-â†?my(action="check", key="_last_usage")
-# â†?{"prompt_tokens": 45000, "completion_tokens": 8000}
+â†’my(action="check", key="_last_usage")
+# â†’{"prompt_tokens": 45000, "completion_tokens": 8000}
 Agent: I've used ~53k tokens total so far. I'll keep my remaining replies concise.
 ```
 
@@ -160,11 +160,11 @@ Agent: I've used ~53k tokens total so far. I'll keep my remaining replies concis
 
 ```text
 Agent: Let me check on the background tasks.
-â†?my(action="check", key="subagents")
-# â†?2 subagent(s):
+â†’my(action="check", key="subagents")
+# â†’2 subagent(s):
 #   [task-1] 'Code review'
 #     phase: running, iteration: 5, elapsed: 12.3s
-#     tools: read(âœ?, grep(âœ?
+#     tools: read(âœ“, grep(âœ“
 #     usage: {'prompt_tokens': 8000, 'completion_tokens': 1200}
 #   [task-2] 'Write tests'
 #     phase: pending, iteration: 0, elapsed: 0.2s
@@ -180,7 +180,7 @@ Core design principle: **All modifications live in memory only. Restart restores
 
 ### Off-limits (BLOCKED)
 
-Cannot be checked or modified â€?fully hidden:
+Cannot be checked or modified â€”fully hidden:
 
 | Category | Attributes | Reason |
 |----------|-----------|--------|

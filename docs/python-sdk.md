@@ -1,6 +1,6 @@
 # Python SDK
 
-Use silver-research-bot as a library â€?no CLI, no gateway, just Python.
+Use silver-research-bot as a library â€”no CLI, no gateway, just Python.
 
 ## Quick Start
 

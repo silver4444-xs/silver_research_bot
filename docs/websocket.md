@@ -5,9 +5,9 @@ silver-research-bot can act as a WebSocket server, allowing external clients (we
 ## Features
 
 - Bidirectional real-time communication over WebSocket
-- Streaming support â€?receive agent responses token by token
+- Streaming support â€”receive agent responses token by token
 - Token-based authentication (static tokens and short-lived issued tokens)
-- Multi-chat multiplexing â€?one connection can run many concurrent `chat_id`s
+- Multi-chat multiplexing â€”one connection can run many concurrent `chat_id`s
 - TLS/SSL support (WSS) with enforced TLSv1.2 minimum
 - Client allow-list via `allowFrom`
 - Auto-cleanup of dead connections
@@ -81,9 +81,9 @@ ws://{host}:{port}{path}?client_id={id}&token={token}
 
 All frames are JSON text. Each message has an `event` field.
 
-### Server â†?Client
+### Server â†’Client
 
-**`ready`** â€?sent immediately after connection is established:
+**`ready`** â€”sent immediately after connection is established:
 
 ```json
 {
@@ -93,7 +93,7 @@ All frames are JSON text. Each message has an `event` field.
 }
 ```
 
-**`message`** â€?full agent response:
+**`message`** â€”full agent response:
 
 ```json
 {
@@ -107,7 +107,7 @@ All frames are JSON text. Each message has an `event` field.
 
 `media` and `reply_to` are only present when applicable.
 
-**`delta`** â€?streaming text chunk (only when `streaming: true`):
+**`delta`** â€”streaming text chunk (only when `streaming: true`):
 
 ```json
 {
@@ -118,7 +118,7 @@ All frames are JSON text. Each message has an `event` field.
 }
 ```
 
-**`stream_end`** â€?signals the end of a streaming segment:
+**`stream_end`** â€”signals the end of a streaming segment:
 
 ```json
 {
@@ -128,19 +128,19 @@ All frames are JSON text. Each message has an `event` field.
 }
 ```
 
-**`attached`** â€?confirmation for `new_chat` / `attach` inbound envelopes (see [Multi-chat multiplexing](#multi-chat-multiplexing)):
+**`attached`** â€”confirmation for `new_chat` / `attach` inbound envelopes (see [Multi-chat multiplexing](#multi-chat-multiplexing)):
 
 ```json
 {"event": "attached", "chat_id": "uuid-v4"}
 ```
 
-**`error`** â€?soft error for malformed inbound envelopes. The connection stays open:
+**`error`** â€”soft error for malformed inbound envelopes. The connection stays open:
 
 ```json
 {"event": "error", "detail": "invalid chat_id"}
 ```
 
-### Client â†?Server
+### Client â†’Server
 
 **Legacy (default chat):** send a plain string, or a JSON object with a recognized text field:
 
@@ -158,7 +158,7 @@ Recognized fields: `content`, `text`, `message` (checked in that order). Invalid
 
 | `type` | Fields | Effect |
 |--------|--------|--------|
-| `new_chat` | â€?| Server mints a new `chat_id`, subscribes this connection, replies with `attached`. |
+| `new_chat` | â€”| Server mints a new `chat_id`, subscribes this connection, replies with `attached`. |
 | `attach` | `chat_id` | Subscribe to an existing `chat_id` (e.g. after a page reload). Replies with `attached`. |
 | `message` | `chat_id`, `content` | Send `content` on `chat_id`. First use auto-attaches; no explicit `attach` needed. |
 
@@ -176,7 +176,7 @@ All fields go under `channels.websocket` in `config.json`.
 | `host` | string | `"127.0.0.1"` | Bind address. Use `"0.0.0.0"` to accept external connections. |
 | `port` | int | `8765` | Listen port. |
 | `path` | string | `"/"` | WebSocket upgrade path. Trailing slashes are normalized (root `/` is preserved). |
-| `maxMessageBytes` | int | `1048576` | Maximum inbound message size in bytes (1 KB â€?16 MB). |
+| `maxMessageBytes` | int | `1048576` | Maximum inbound message size in bytes (1 KB â€”16 MB). |
 
 ### Authentication
 
@@ -186,7 +186,7 @@ All fields go under `channels.websocket` in `config.json`.
 | `websocketRequiresToken` | bool | `true` | When `true` and no static `token` is configured, clients must still present a valid issued token. Set to `false` to allow unauthenticated connections (only safe for local/trusted networks). |
 | `tokenIssuePath` | string | `""` | HTTP path for issuing short-lived tokens. Must differ from `path`. See [Token Issuance](#token-issuance). |
 | `tokenIssueSecret` | string | `""` | Secret required to obtain tokens via the issue endpoint. If empty, any client can obtain tokens (logged as a warning). |
-| `tokenTtlS` | int | `300` | Time-to-live for issued tokens in seconds (30 â€?86,400). |
+| `tokenTtlS` | int | `300` | Time-to-live for issued tokens in seconds (30 â€”86,400). |
 
 ### Access Control
 
@@ -204,8 +204,8 @@ All fields go under `channels.websocket` in `config.json`.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `pingIntervalS` | float | `20.0` | WebSocket ping interval in seconds (5 â€?300). |
-| `pingTimeoutS` | float | `20.0` | Time to wait for a pong before closing the connection (5 â€?300). |
+| `pingIntervalS` | float | `20.0` | WebSocket ping interval in seconds (5 â€”300). |
+| `pingTimeoutS` | float | `20.0` | Time to wait for a pong before closing the connection (5 â€”300). |
 
 ### TLS/SSL
 
@@ -262,7 +262,7 @@ websocat "ws://127.0.0.1:8765/ws?client_id=alice&token=nbwt_aBcDeFg..."
 
 ### Limits
 
-- Issued tokens are single-use â€?each token can only complete one handshake.
+- Issued tokens are single-use â€”each token can only complete one handshake.
 - Outstanding tokens are capped at 10,000. Requests beyond this return HTTP 429.
 - Expired tokens are purged lazily on each issue or validation request.
 
@@ -297,7 +297,7 @@ client                                server
 
 - Every outbound event carries `chat_id`. Clients must dispatch by that field.
 - `chat_id` format: `^[A-Za-z0-9_:-]{1,64}$`. Non-matching values return `error`.
-- `message` auto-attaches on first use â€?no separate `attach` is required for chats the server minted (`new_chat`) on the same connection.
+- `message` auto-attaches on first use â€”no separate `attach` is required for chats the server minted (`new_chat`) on the same connection.
 - Errors (invalid envelope, unknown `type`, bad `chat_id`) are soft: the server replies with `{"event":"error","detail":"..."}` and keeps the connection open.
 
 ### Backward compatibility
@@ -306,7 +306,7 @@ Legacy clients that only send plain text or `{"content": ...}` keep working unch
 
 ### Security boundary
 
-`chat_id` is a *capability*: anyone holding a valid WebSocket auth credential and the chat_id can attach to that conversation and see its output. This is safe for silver-research-bot's local, single-user model. Multi-tenant deployments should namespace chat_ids per user (or introduce a per-tenant auth gate) â€?silver-research-bot does not do this today.
+`chat_id` is a *capability*: anyone holding a valid WebSocket auth credential and the chat_id can attach to that conversation and see its output. This is safe for silver-research-bot's local, single-user model. Multi-tenant deployments should namespace chat_ids per user (or introduce a per-tenant auth gate) â€”silver-research-bot does not do this today.
 
 ## Security Notes
 
@@ -318,7 +318,7 @@ Legacy clients that only send plain text or `{"content": ...}` keep working unch
 
 ## Media Files
 
-Outbound `message` events may include a `media` field containing local filesystem paths. Remote clients cannot access these files directly â€?they need either:
+Outbound `message` events may include a `media` field containing local filesystem paths. Remote clients cannot access these files directly â€”they need either:
 
 - A shared filesystem mount, or
 - An HTTP file server serving the silver-research-bot media directory

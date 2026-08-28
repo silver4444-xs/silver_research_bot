@@ -28,6 +28,6 @@ The gateway wakes up every 30 minutes and checks `HEARTBEAT.md` in your workspac
 - [ ] Scan inbox for urgent emails
 ```
 
-The agent can also manage this file itself â€?ask it to "add a periodic task" and it will update `HEARTBEAT.md` for you.
+The agent can also manage this file itself â€”ask it to "add a periodic task" and it will update `HEARTBEAT.md` for you.
 
 > **Note:** The gateway must be running (`silver-research-bot gateway`) and you must have chatted with the bot at least once so it knows which channel to deliver to.
